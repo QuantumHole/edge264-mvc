@@ -1215,6 +1215,13 @@ static always_inline int oldest_task(Edge264Decoder *dec, unsigned tasks) {
 	}
 	return task_id;
 }
+// Frames targeted by a busy (pending or running) task, i.e. that will make progress.
+static always_inline unsigned writing_frames(Edge264Decoder *dec) {
+	unsigned writing = 0;
+	for (unsigned b = dec->busy_tasks; b; b &= b - 1)
+		writing |= 1u << dec->taskPics[__builtin_ctz(b)];
+	return writing;
+}
 static always_inline unsigned ready_tasks(Edge264Decoder *c) {
 	i32x4 not_ready = ~set32(ready_frames(c));
 	i32x4 a = (c->task_dependencies_v[0] & not_ready) == 0;

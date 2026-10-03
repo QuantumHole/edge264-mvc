@@ -121,7 +121,7 @@ static int bump_frame(Edge264Decoder *dec, int non_base_view, unsigned ignored) 
 	return 1;
 }
 
-static void conceal_frame(Edge264Decoder *dec, int id);
+static int conceal_frame(Edge264Decoder *dec, int id);
 static void progress_or_wait(Edge264Decoder *dec);
 
 static int bump_all_frames(Edge264Decoder *dec) {
@@ -413,7 +413,7 @@ static unsigned ppow(unsigned p65536, unsigned k) {
  * 
  * FIXME remove ldleft macros eventually
 */
-static void recover_slice(Edge264Context *ctx, int currPic) {
+static void recover_slice(Edge264Context *ctx, int currPic, int keep_mb) {
 	// mark all previous mbs as erroneous and assign them an error probability
 	ctx->mby = (unsigned)ctx->t.first_mb_in_slice / (unsigned)ctx->t.pic_width_in_mbs;
 	ctx->mbx = (unsigned)ctx->t.first_mb_in_slice % (unsigned)ctx->t.pic_width_in_mbs;
@@ -429,6 +429,8 @@ static void recover_slice(Edge264Context *ctx, int currPic) {
 		unsigned p12800 = (!ctx->t.pps.entropy_coding_mode_flag) ?
 			((i + 1) * 12800 + num - 1) / num : // division with upward rounding
 			((div - (65536 - ppow(65194, num - 1 - i))) * 12800 + div - 1) / div;
+		if (ctx->t.first_mb_in_slice + i < (unsigned)keep_mb)
+			goto next_mb; // published and kept as decoded
 		ctx->_mb->error_probability = p12800 >> 7;
 		unsigned p128 = p12800 / 100;
 		
@@ -532,6 +534,7 @@ static void recover_slice(Edge264Context *ctx, int currPic) {
 		__atomic_store_n(&ctx->_mb->recovery_bits, ctx->t.frame_flip_bit + 2, __ATOMIC_RELEASE);
 		
 		// point to the next macroblock
+	next_mb:
 		ctx->_mb++;
 		ctx->mbx++;
 		ctx->mbCol++;
@@ -704,23 +707,32 @@ void *ADD_VARIANT(worker_loop)(void *arg) {
 		if (c.t.unref_cb)
 			c.t.unref_cb((int)ret, c.t.unref_arg);
 		
+		// Only the macroblocks a slice publishes are final, and a damaged frame
+		// is concealed from its deblocking frontier onwards (conceal_frame), so
+		// what other tasks read never changes afterwards. On error, keep the
+		// macroblocks that may already be published, i.e. those deblocked while
+		// decoding (one row behind) or decoded without deblocking (whole rows).
+		int end_mb = c.CurrMbAddr;
+		int width = c.t.pic_width_in_mbs;
+		int keep_mb = ret == 0 ? end_mb : max((int)c.t.first_mb_in_slice,
+			c.t.disable_deblocking_filter_idc == 1 ? end_mb - end_mb % width : end_mb - width);
+		
 		// deblock and publish the slice after the preceding ones of its frame,
 		// so that each macroblock is deblocked with the parameters of its own
 		// slice rather than those of the slice completing the frame
-		int end_mb = c.CurrMbAddr;
 		int turn = wait_slice_turn(&c, currPic);
 		if (turn && c.t.next_deblock_addr < 0 && c.t.disable_deblocking_filter_idc == 0)
 			c.t.next_deblock_addr = c.t.first_mb_in_slice;
 		if (c.t.next_deblock_addr >= 0)
-			deblock_range(&c, currPic, max(c.t.next_deblock_addr, (int)c.t.first_mb_in_slice), end_mb);
+			deblock_range(&c, currPic, max(c.t.next_deblock_addr, (int)c.t.first_mb_in_slice), keep_mb);
 		
-		// on error, recover mbs and signal them as erroneous (allows overwrite by redundant slices)
+		// on error, recover the other mbs and signal them as erroneous
 		if (__builtin_expect(ret != 0, 0))
-			recover_slice(&c, currPic);
+			recover_slice(&c, currPic, keep_mb);
 		
 		// update c.d->next_deblock_addr (atomic: read concurrently by other threads)
 		if (turn) {
-			__atomic_store_n(&c.d->next_deblock_addr[currPic], end_mb, __ATOMIC_SEQ_CST);
+			__atomic_store_n(&c.d->next_deblock_addr[currPic], keep_mb, __ATOMIC_SEQ_CST);
 			if (c.thread_id >= 0)
 				pthread_cond_broadcast(&c.d->task_progress);
 		}
@@ -1173,14 +1185,17 @@ static void initialize_task(Edge264Decoder *dec, Edge264SeqParameterSet *sps, Ed
 
 
 
-// Replace an abandoned damaged picture with deterministic neutral samples and
-// macroblock metadata before publishing it as complete. The caller holds lock,
-// and only selects slots with no in-flight task, so no worker can race these
-// writes. The release store publishes the concealed buffers to dependent tasks.
-// The MVC path below additionally READS another frame's sample buffer; that read
-// is gated on ready_frames, an acquire load of the completion flag that pairs
-// with the release store of the worker that last wrote the frame.
-static void conceal_frame(Edge264Decoder *dec, int id) {
+// Replace the unpublished part of an abandoned damaged picture with
+// deterministic neutral samples and macroblock metadata, then publish it as
+// complete. Macroblocks before the deblocking frontier are final (other tasks
+// may already have read them) so they are kept, and since the frontier only
+// stops on a missing or damaged slice regardless of thread timing (see
+// wait_slice_turn) the result is the same multithreaded or not. The caller
+// holds lock and only selects slots with no in-flight task, so no worker can
+// race these writes. The release store publishes the concealed buffers to
+// dependent tasks. Returns 0 if the picture must be concealed later, once the
+// base view it is concealed from is complete.
+static int conceal_frame(Edge264Decoder *dec, int id) {
 	assert(dec->samples_buffers[id] && dec->mb_buffers[id]);
 	// A damaged MVC dependent view is best concealed by the base view of its
 	// access unit: the two eyes differ only by disparity, so the viewer sees one
@@ -1191,12 +1206,15 @@ static void conceal_frame(Edge264Decoder *dec, int id) {
 	// different sequences share a full POC while carrying different frame_num
 	// (tests/gen_same_poc_stream.py), and would fill the damaged eye from another
 	// access unit: a stale picture presented as the other eye, worse than the
-	// neutral samples it replaces. Only take a complete base, so no worker still
-	// writes it. Otherwise fall back to neutral samples.
+	// neutral samples it replaces. Take the base once complete, so no worker
+	// still writes it: leave the picture for a later call while the base is
+	// being decoded (waiting here could stall the very tasks completing it), and
+	// conceal the base first if it is damaged too. Fall back to neutral samples
+	// without a base, so the result never depends on thread timing.
 	int base = -1;
 	if (dec->non_base_frames >> id & 1) {
 		unsigned live = (dec->short_term_frames | dec->long_term_frames | dec->to_get_frames | dec->output_frames) &
-			~dec->non_base_frames & ready_frames(dec);
+			~dec->non_base_frames;
 		for (unsigned b = live; b; b &= b - 1) {
 			int i = __builtin_ctz(b);
 			if (dec->samples_buffers[i] && dec->FrameNums[i] == dec->FrameNums[id] &&
@@ -1204,28 +1222,55 @@ static void conceal_frame(Edge264Decoder *dec, int id) {
 				(base < 0 || dec->FrameIds[i] > dec->FrameIds[base]))
 				base = i;
 		}
+		if (base >= 0 && __atomic_load_n(&dec->next_deblock_addr[base], __ATOMIC_ACQUIRE) != INT_MAX) {
+			if (writing_frames(dec) >> base & 1)
+				return 0;
+			if (base == dec->currPic)
+				base = -1;
+			else
+				conceal_frame(dec, base);
+		}
 	}
-	if (base >= 0)
-		memcpy(dec->samples_buffers[id], dec->samples_buffers[base], dec->plane_size_Y + dec->plane_size_C + 16);
-	else
-		memset(dec->samples_buffers[id], 0, dec->plane_size_Y + dec->plane_size_C + 16);
 	int width = dec->sps.pic_width_in_mbs;
 	int height = dec->sps.pic_height_in_mbs;
+	int total_mbs = width * height;
 	int mbs = (width + 1) * height - 1;
+	int from = min(max(__atomic_load_n(&dec->next_deblock_addr[id], __ATOMIC_ACQUIRE), 0), total_mbs);
+	size_t stride_Y = dec->out.stride_Y;
+	size_t stride_C = dec->out.stride_C;
+	uint8_t *dst = dec->samples_buffers[id];
+	const uint8_t *src = base >= 0 ? dec->samples_buffers[base] : NULL;
 	int8_t recovery_bits = ((dec->frame_flip_bits >> id) & 1) + 2;
 	Edge264Macroblock *m = dec->mb_buffers[id];
-	for (int y = 0; y < height; y++) {
-		int row = y * (width + 1);
-		for (int x = 0; x < width; x++) {
-			m[row + x] = unavail_mb;
-			m[row + x].error_probability = 100;
-			m[row + x].recovery_bits = recovery_bits;
+	for (int addr = from; addr < total_mbs; addr++) {
+		int x = addr % width;
+		int y = addr / width;
+		size_t offY = (size_t)y * 16 * stride_Y + x * 16;
+		size_t offC = dec->plane_size_Y + (size_t)y * 8 * stride_C + x * 8;
+		for (int r = 0; r < 16; r++, offY += stride_Y) {
+			if (src)
+				memcpy(dst + offY, src + offY, 16);
+			else
+				memset(dst + offY, 0, 16);
 		}
-		if (row + width < mbs)
+		for (int r = 0; r < 16; r++, offC += stride_C >> 1) { // Cb and Cr rows alternate
+			if (src)
+				memcpy(dst + offC, src + offC, 8);
+			else
+				memset(dst + offC, 0, 8);
+		}
+		int row = y * (width + 1);
+		m[row + x] = unavail_mb;
+		m[row + x].error_probability = 100;
+		m[row + x].recovery_bits = recovery_bits;
+		if (x == width - 1 && row + width < mbs)
 			m[row + width] = unavail_mb;
 	}
 	__atomic_store_n(&dec->remaining_mbs[id], 0, __ATOMIC_RELEASE);
 	__atomic_store_n(&dec->next_deblock_addr[id], INT_MAX, __ATOMIC_RELEASE);
+	if (dec->n_threads)
+		pthread_cond_broadcast(&dec->task_progress);
+	return 1;
 }
 
 // Break a task-completion wait on a reference picture that can no longer
@@ -1242,14 +1287,15 @@ static int release_terminal_task_dependencies(Edge264Decoder *dec) {
 	unsigned terminal = depended_frames(dec) & ~ready_frames(dec) & ~inflight_frames(dec);
 	if (dec->currPic >= 0)
 		terminal &= ~(1u << dec->currPic);
+	unsigned concealed = 0;
 	for (unsigned b = terminal; b; b &= b - 1)
-		conceal_frame(dec, __builtin_ctz(b));
-	if (terminal) {
+		concealed |= (unsigned)conceal_frame(dec, __builtin_ctz(b)) << __builtin_ctz(b);
+	if (concealed) {
 		dec->ready_tasks = ready_tasks(dec);
 		if (dec->ready_tasks && dec->n_threads)
 			pthread_cond_broadcast(&dec->task_ready);
 	}
-	return terminal != 0;
+	return concealed != 0;
 }
 
 // All task_complete waits assume that some worker can eventually signal. Check
