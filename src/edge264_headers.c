@@ -594,6 +594,40 @@ static void deblock_range(Edge264Context *c, int currPic, int from, int to) {
 }
 
 /**
+ * Wait until the slices preceding this one in its frame have published their
+ * macroblocks, and return whether the deblocking frontier then reached this
+ * slice, i.e. whether it should deblock and publish its own macroblocks.
+ * Waiting only on slices that are being decoded makes the result independent
+ * of thread timing: a missing or damaged preceding slice stops the frontier
+ * before this slice whether multithreaded or not.
+ */
+static int wait_slice_turn(Edge264Context *c, int currPic) {
+	Edge264Decoder *dec = c->d;
+	int32_t first = c->t.first_mb_in_slice;
+	int32_t cur = __atomic_load_n(&dec->next_deblock_addr[currPic], __ATOMIC_ACQUIRE);
+	if (cur < first && c->thread_id >= 0) {
+		pthread_mutex_lock(&dec->lock);
+		for (;;) {
+			cur = __atomic_load_n(&dec->next_deblock_addr[currPic], __ATOMIC_ACQUIRE);
+			if (cur >= first)
+				break;
+			int preceding = 0;
+			for (unsigned b = dec->busy_tasks; b; b &= b - 1) {
+				int i = __builtin_ctz(b);
+				preceding |= dec->taskPics[i] == currPic && dec->tasks[i].first_mb_in_slice < first;
+			}
+			if (!preceding)
+				break;
+			pthread_cond_wait(&dec->task_progress, &dec->lock);
+		}
+		pthread_mutex_unlock(&dec->lock);
+	}
+	return cur >= first && cur <= c->CurrMbAddr;
+}
+
+
+
+/**
  * This function is the entry point for worker threads, where they consume
  * tasks continuously until stopped by the parent process.
  */
@@ -617,7 +651,9 @@ void *ADD_VARIANT(worker_loop)(void *arg) {
 			return NULL;
 		}
 		assert((unsigned)c.d->ready_tasks - 1 < 65535); // 0 < ready_tasks < 65536
-		int task_id = __builtin_ctz(c.d->ready_tasks); // FIXME arbitrary selection for now
+		// pick the oldest ready task, so that the slices preceding a task in its
+		// frame (which it waits for in wait_slice_turn) have already started
+		int task_id = oldest_task(c.d, c.d->ready_tasks);
 		int currPic = c.d->taskPics[task_id];
 		c.d->pending_tasks &= ~(1 << task_id);
 		c.d->ready_tasks &= ~(1 << task_id);
@@ -626,6 +662,14 @@ void *ADD_VARIANT(worker_loop)(void *arg) {
 		unsigned long long clock_start = get_relative_time_us() - c.log_base_us;
 		c.t = c.d->tasks[task_id];
 		unsigned approx_byte_size = c.t.gb.end - c.t.gb.CPB;
+		// The slice deblocks its macroblocks while decoding them if all the
+		// macroblocks before it are already deblocked (or if it is deblocked
+		// independently), and then publishes the deblocking frontier per row for
+		// the tasks reading this frame. Otherwise it deblocks them at the end.
+		int32_t cur_deblock_addr = __atomic_load_n(&c.d->next_deblock_addr[currPic], __ATOMIC_ACQUIRE);
+		c.t.next_deblock_idc = (cur_deblock_addr == c.t.first_mb_in_slice) ? currPic : -1;
+		c.t.next_deblock_addr = (cur_deblock_addr == c.t.first_mb_in_slice ||
+			c.t.disable_deblocking_filter_idc == 2) ? c.t.first_mb_in_slice : INT_MIN;
 		initialize_context(&c, currPic);
 		
 		// call the function containing the macroblock decoding loop
@@ -660,24 +704,30 @@ void *ADD_VARIANT(worker_loop)(void *arg) {
 		if (c.t.unref_cb)
 			c.t.unref_cb((int)ret, c.t.unref_arg);
 		
-		// deblock the rest of mbs in this slice
+		// deblock and publish the slice after the preceding ones of its frame,
+		// so that each macroblock is deblocked with the parameters of its own
+		// slice rather than those of the slice completing the frame
+		int end_mb = c.CurrMbAddr;
+		int turn = wait_slice_turn(&c, currPic);
+		if (turn && c.t.next_deblock_addr < 0 && c.t.disable_deblocking_filter_idc == 0)
+			c.t.next_deblock_addr = c.t.first_mb_in_slice;
 		if (c.t.next_deblock_addr >= 0)
-			deblock_range(&c, currPic, max(c.t.next_deblock_addr, (int)c.t.first_mb_in_slice), c.CurrMbAddr);
+			deblock_range(&c, currPic, max(c.t.next_deblock_addr, (int)c.t.first_mb_in_slice), end_mb);
 		
 		// on error, recover mbs and signal them as erroneous (allows overwrite by redundant slices)
 		if (__builtin_expect(ret != 0, 0))
 			recover_slice(&c, currPic);
 		
-		// update c.d->next_deblock_addr, considering it might have reached first_mb_in_slice since start
-		// (atomic: written without the lock and read concurrently by other threads)
-		if (__atomic_load_n(&c.d->next_deblock_addr[currPic], __ATOMIC_ACQUIRE) >= c.t.first_mb_in_slice &&
-		    !(c.t.disable_deblocking_filter_idc == 0 && c.t.next_deblock_addr < 0)) {
-			__atomic_store_n(&c.d->next_deblock_addr[currPic], c.CurrMbAddr, __ATOMIC_RELEASE);
-			pthread_cond_broadcast(&c.d->task_progress);
+		// update c.d->next_deblock_addr (atomic: read concurrently by other threads)
+		if (turn) {
+			__atomic_store_n(&c.d->next_deblock_addr[currPic], end_mb, __ATOMIC_SEQ_CST);
+			if (c.thread_id >= 0)
+				pthread_cond_broadcast(&c.d->task_progress);
 		}
 
 		// deblock the rest of the frame if all mbs have been decoded correctly
-		int remaining_mbs = ret ?: __atomic_sub_fetch(&c.d->remaining_mbs[currPic], c.CurrMbAddr - c.t.first_mb_in_slice, __ATOMIC_ACQ_REL);
+		// (only left when slices arrived out of order)
+		int remaining_mbs = ret ?: __atomic_sub_fetch(&c.d->remaining_mbs[currPic], end_mb - c.t.first_mb_in_slice, __ATOMIC_ACQ_REL);
 		if (remaining_mbs == 0) {
 			int total_mbs = c.t.pic_width_in_mbs * c.t.pic_height_in_mbs;
 			deblock_range(&c, currPic, __atomic_load_n(&c.d->next_deblock_addr[currPic], __ATOMIC_ACQUIRE), total_mbs);
@@ -703,8 +753,11 @@ void *ADD_VARIANT(worker_loop)(void *arg) {
 		if (c.thread_id >= 0) {
 			pthread_mutex_lock(&c.d->lock);
 			pthread_cond_signal(&c.d->task_complete);
+			// Under the lock, so that a slice waiting for this one in
+			// wait_slice_turn cannot miss it: the unlocked broadcast after
+			// publishing the frontier may precede its wait.
+			pthread_cond_broadcast(&c.d->task_progress);
 			if (remaining_mbs == 0) {
-				pthread_cond_broadcast(&c.d->task_progress);
 				c.d->ready_tasks = ready_tasks(c.d);
 				if (c.d->ready_tasks)
 					pthread_cond_broadcast(&c.d->task_ready);
@@ -1097,12 +1150,6 @@ static void initialize_task(Edge264Decoder *dec, Edge264SeqParameterSet *sps, Ed
 	t->FrameId = dec->FrameIds[dec->currPic];
 	t->plane_size_Y = dec->plane_size_Y;
 	t->plane_size_C = dec->plane_size_C;
-	// atomic load: a worker thread may be advancing this frame's deblock frontier concurrently
-	int32_t cur_deblock_addr = __atomic_load_n(&dec->next_deblock_addr[dec->currPic], __ATOMIC_ACQUIRE);
-	t->next_deblock_idc = (cur_deblock_addr == t->first_mb_in_slice &&
-		dec->nal_ref_idc) ? dec->currPic : -1;
-	t->next_deblock_addr = (cur_deblock_addr == t->first_mb_in_slice ||
-		t->disable_deblocking_filter_idc == 2) ? t->first_mb_in_slice : INT_MIN;
 	t->prev_long_term_frames = dec->prev_long_term_frames & ~dec->prev_short_term_frames; // mask of only long-term frames
 	t->mb_buffer = (Edge264Macroblock *)dec->mb_buffers[dec->currPic];
 	memcpy(t->samples_buffers, dec->samples_buffers, sizeof(t->samples_buffers));
@@ -1707,6 +1754,7 @@ int ADD_VARIANT(parse_slice_layer_without_partitioning)(Edge264Decoder *dec, Edg
 	// FIXME check against dependencies on non-reference slots
 	dec->ready_tasks |= ((dec->task_dependencies[task_id] & ~ready_frames(dec)) == 0) << task_id;
 	dec->taskPics[task_id] = dec->currPic;
+	dec->task_seq[task_id] = dec->next_task_seq++;
 	ret = print_dec(dec, dec->n_threads || dec->worker_loop != worker_loop_log ?
 		"  decode_NAL_result: %s\n" : t->pps.entropy_coding_mode_flag ?
 		"  macroblocks_cabac:\n" : "  macroblocks_cavlc:\n", 0);

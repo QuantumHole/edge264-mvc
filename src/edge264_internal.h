@@ -433,6 +433,8 @@ typedef struct Edge264Decoder {
 	uint16_t ready_tasks;
 	volatile union { uint32_t task_dependencies[16]; i32x4 task_dependencies_v[4]; }; // frames on which each task depends to start
 	union { int8_t taskPics[16]; i8x16 taskPics_v; }; // values of currPic for each task
+	uint32_t task_seq[16]; // decoding order of each task, workers pick the oldest ready task
+	uint32_t next_task_seq;
 	Edge264Task tasks[16];
 	
 	// Logging context
@@ -1203,6 +1205,15 @@ static always_inline unsigned ready_frames(Edge264Decoder *c) {
 	for (int i = 0; i < 32; i++)
 		ready |= (__atomic_load_n(&c->next_deblock_addr[i], __ATOMIC_ACQUIRE) == INT_MAX) << i;
 	return ready;
+}
+static always_inline int oldest_task(Edge264Decoder *dec, unsigned tasks) {
+	int task_id = tasks ? __builtin_ctz(tasks) : 0;
+	for (unsigned r = tasks & (tasks - 1); r; r &= r - 1) {
+		int i = __builtin_ctz(r);
+		if ((int32_t)(dec->task_seq[i] - dec->task_seq[task_id]) < 0)
+			task_id = i;
+	}
+	return task_id;
 }
 static always_inline unsigned ready_tasks(Edge264Decoder *c) {
 	i32x4 not_ready = ~set32(ready_frames(c));

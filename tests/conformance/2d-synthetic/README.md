@@ -69,3 +69,26 @@ coefficients dequantized under rule A instead of flat-16:
 
 Without the fix this line FAILs (the base hash equals the flat-16 decode, i.e. the
 un-patched stream's output); with it, it matches the FFmpeg-anchored rule-A hash.
+
+## `slice_deblock_offsets.264`
+
+Guards the per-slice deblocking parameters under multithreading. The deblocking
+of a macroblock uses `slice_alpha_c0_offset_div2` and `slice_beta_offset_div2`
+of the slice containing it (8.7). Slices of one picture are decoded in parallel,
+and a slice whose predecessor was still being decoded used to leave its
+macroblocks to whichever slice completed the picture, which deblocked them with
+its own offsets: **wrong pixels that vary from run to run** whenever slices
+carry different offsets, while single-threaded decoding stayed correct.
+
+352x288, High, CABAC, all-intra (every picture an IDR), 4 slices per picture,
+30 frames; the odd slices of each picture get offsets of +3/+3 instead of the
+encoded 0/0. Reproduce:
+
+    ffmpeg -f lavfi -i testsrc2=size=352x288:rate=25 -frames:v 30 \
+      -c:v libx264 -profile:v high -pix_fmt yuv420p \
+      -x264-params keyint=1:slices=4:qp=34:deblock=0,0 -f h264 base.264
+    python3 tests/gen_slice_deblock_offsets.py base.264 slice_deblock_offsets.264
+
+Without the fix the multithreaded passes of this fixture's line FAIL (wrong and
+nondeterministic hash); with it, single- and multi-thread both match the
+FFmpeg-anchored hash.
