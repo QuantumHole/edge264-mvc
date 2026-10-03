@@ -598,14 +598,21 @@ static void deblock_range(Edge264Context *c, int currPic, int from, int to) {
 }
 
 /**
- * Wait until the slices preceding this one in its frame have published their
- * macroblocks, and return whether the deblocking frontier then reached this
- * slice, i.e. whether it should deblock and publish its own macroblocks.
- * Waiting only on slices that are being decoded makes the result independent
- * of thread timing: a missing or damaged preceding slice stops the frontier
- * before this slice whether multithreaded or not.
+ * Decide how a slice deblocks and publishes its macroblocks once decoded,
+ * after the preceding slices of its frame (so that each macroblock is
+ * deblocked with the parameters of its own slice):
+ * _ SLICE_TURN if the deblocking frontier reached it, so it does it now;
+ * _ SLICE_DEFERRED if a preceding slice is still being decoded, in which case
+ *   it is recorded in deblock_pending and the thread publishing the preceding
+ *   slice will do it (process_pending_slices), freeing this worker meanwhile;
+ * _ SLICE_ABANDONED if no preceding slice is being decoded, i.e. one is
+ *   missing or damaged (or arrives later with arbitrary slice order), which
+ *   stops the frontier before this slice whatever the thread timing.
+ * A damaged slice waits for its turn instead of being deferred, since it
+ * recovers its unpublished macroblocks only after deblocking the others.
  */
-static int wait_slice_turn(Edge264Context *c, int currPic) {
+enum { SLICE_ABANDONED, SLICE_TURN, SLICE_DEFERRED };
+static int slice_turn(Edge264Context *c, int currPic, int keep_mb, int ret) {
 	Edge264Decoder *dec = c->d;
 	int32_t first = c->t.first_mb_in_slice;
 	int32_t cur = __atomic_load_n(&dec->next_deblock_addr[currPic], __ATOMIC_ACQUIRE);
@@ -622,11 +629,60 @@ static int wait_slice_turn(Edge264Context *c, int currPic) {
 			}
 			if (!preceding)
 				break;
+			if (ret == 0 && ~dec->deblock_pending_slices) {
+				int i = __builtin_ctzll(~dec->deblock_pending_slices);
+				dec->deblock_pending[i] = (Edge264PendingSlice){
+					.pic = currPic,
+					.deblock = c->t.disable_deblocking_filter_idc == 0,
+					.entropy_coding_mode_flag = c->t.pps.entropy_coding_mode_flag,
+					.FilterOffsetA = c->t.FilterOffsetA,
+					.FilterOffsetB = c->t.FilterOffsetB,
+					.first_mb = first,
+					.keep_mb = keep_mb,
+				};
+				dec->deblock_pending_slices |= (uint64_t)1 << i;
+				pthread_mutex_unlock(&dec->lock);
+				return SLICE_DEFERRED;
+			}
 			wait_frame_locked(dec, currPic, first);
 		}
 		pthread_mutex_unlock(&dec->lock);
 	}
-	return cur >= first && cur <= c->CurrMbAddr;
+	return cur >= first && cur <= c->CurrMbAddr ? SLICE_TURN : SLICE_ABANDONED;
+}
+
+/**
+ * After publishing a slice up to frontier, deblock and publish in order the
+ * following slices of the frame that finished decoding meanwhile.
+ */
+static void process_pending_slices(Edge264Context *c, int currPic, int32_t frontier) {
+	Edge264Decoder *dec = c->d;
+	if (c->thread_id < 0)
+		return;
+	for (;;) {
+		pthread_mutex_lock(&dec->lock);
+		int slot = -1;
+		for (uint64_t b = dec->deblock_pending_slices; b; b &= b - 1) {
+			int i = __builtin_ctzll(b);
+			if (dec->deblock_pending[i].pic == currPic && dec->deblock_pending[i].first_mb == frontier)
+				slot = i;
+		}
+		if (slot < 0) {
+			pthread_mutex_unlock(&dec->lock);
+			return;
+		}
+		Edge264PendingSlice s = dec->deblock_pending[slot];
+		dec->deblock_pending_slices &= ~((uint64_t)1 << slot);
+		pthread_mutex_unlock(&dec->lock);
+		if (s.deblock) {
+			c->t.FilterOffsetA = s.FilterOffsetA;
+			c->t.FilterOffsetB = s.FilterOffsetB;
+			c->t.pps.entropy_coding_mode_flag = s.entropy_coding_mode_flag;
+			deblock_range(c, currPic, s.first_mb, s.keep_mb);
+		}
+		publish_frame_progress(dec, currPic, s.keep_mb);
+		frontier = s.keep_mb;
+	}
 }
 
 
@@ -725,10 +781,10 @@ void *ADD_VARIANT(worker_loop)(void *arg) {
 		// deblock and publish the slice after the preceding ones of its frame,
 		// so that each macroblock is deblocked with the parameters of its own
 		// slice rather than those of the slice completing the frame
-		int turn = wait_slice_turn(&c, currPic);
-		if (turn && c.t.next_deblock_addr < 0 && c.t.disable_deblocking_filter_idc == 0)
+		int turn = slice_turn(&c, currPic, keep_mb, ret);
+		if (turn == SLICE_TURN && c.t.next_deblock_addr < 0 && c.t.disable_deblocking_filter_idc == 0)
 			c.t.next_deblock_addr = c.t.first_mb_in_slice;
-		if (c.t.next_deblock_addr >= 0)
+		if (c.t.next_deblock_addr >= 0 && (turn != SLICE_DEFERRED || c.t.disable_deblocking_filter_idc == 2))
 			deblock_range(&c, currPic, max(c.t.next_deblock_addr, (int)c.t.first_mb_in_slice), keep_mb);
 		
 		// on error, recover the other mbs and signal them as erroneous
@@ -736,8 +792,10 @@ void *ADD_VARIANT(worker_loop)(void *arg) {
 			recover_slice(&c, currPic, keep_mb);
 		
 		// update c.d->next_deblock_addr (atomic: read concurrently by other threads)
-		if (turn)
+		if (turn == SLICE_TURN) {
 			publish_frame_progress(c.d, currPic, keep_mb);
+			process_pending_slices(&c, currPic, keep_mb);
+		}
 
 		// deblock the rest of the frame if all mbs have been decoded correctly
 		// (only left when slices arrived out of order)
@@ -1690,6 +1748,12 @@ int ADD_VARIANT(parse_slice_layer_without_partitioning)(Edge264Decoder *dec, Edg
 		dec->FieldOrderCnt[1][currPic] = dec->BottomFieldOrderCnt;
 		dec->remaining_mbs[currPic] = sps->pic_width_in_mbs * sps->pic_height_in_mbs;
 		__atomic_store_n(&dec->next_deblock_addr[currPic], 0, __ATOMIC_RELEASE);
+		// forget the slices a previous picture in this slot left to deblock
+		// after a missing slice, which nothing will process anymore
+		for (uint64_t b = dec->deblock_pending_slices; b; b &= b - 1) {
+			if (dec->deblock_pending[__builtin_ctzll(b)].pic == currPic)
+				dec->deblock_pending_slices &= ~(b & -b);
+		}
 		log_dec(dec, "  FrameId: %u\n", dec->FrameIds[currPic]);
 	}
 	

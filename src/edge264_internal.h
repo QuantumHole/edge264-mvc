@@ -361,6 +361,15 @@ typedef struct Edge264Context {
  * _ pictures sent to get_frame and waiting to be returned have values (0, 1)
  */
 typedef int (*Parser)(Edge264Decoder *dec, Edge264UnrefCb unref_cb, void *unref_arg);
+typedef struct {
+	int8_t pic;
+	int8_t deblock;
+	int8_t entropy_coding_mode_flag;
+	int8_t FilterOffsetA;
+	int8_t FilterOffsetB;
+	int32_t first_mb;
+	int32_t keep_mb;
+} Edge264PendingSlice; // a decoded slice left for another thread to deblock and publish in order
 typedef struct Edge264Decoder {
 	// minimal set of fields preserved across flushes
 	Edge264GetBits gb; // must be first in the struct to use the same pointer for bitstream functions
@@ -433,6 +442,8 @@ typedef struct Edge264Decoder {
 	uint16_t ready_tasks;
 	volatile union { uint32_t task_dependencies[16]; i32x4 task_dependencies_v[4]; }; // frames on which each task depends to start
 	union { int8_t taskPics[16]; i8x16 taskPics_v; }; // values of currPic for each task
+	uint64_t deblock_pending_slices; // used entries of deblock_pending
+	Edge264PendingSlice deblock_pending[64];
 	int32_t progress_wake_addr[32]; // lowest next_deblock_addr a task waits for on each frame, or INT_MAX
 	uint32_t task_seq[16]; // decoding order of each task, workers pick the oldest ready task
 	uint32_t next_task_seq;
