@@ -450,11 +450,28 @@ edge264 was created to experiment with programming techniques that improve perfo
 
 ## Relation to edge264
 
-edge264-mvc is a standalone decoder derived from [tvlabs/edge264](https://github.com/tvlabs/edge264) by Thibault Raffaillac, which grew up as a research effort on new software engineering practices (most notably C vector extensions in place of hand-crafted assembly). `main` adds the fixes below on top of the edge264 codebase; each fix also lives on its own `fix/*`, `pick/*` or `port/*` branch, and cherry-picked PRs keep their original authorship.
+edge264-mvc is a standalone decoder derived from [tvlabs/edge264](https://github.com/tvlabs/edge264) by Thibault Raffaillac, which grew up as a research effort on new software engineering practices (most notably C vector extensions in place of hand-crafted assembly). `main` adds the fixes and speed-ups below on top of the edge264 codebase; each fix also lives on its own `fix/*`, `pick/*` or `port/*` branch, each speed-up on its own `perf/*` branch, and cherry-picked PRs keep their original authorship.
 
 Multithreaded decoding is the headline addition. Call `edge264_alloc` with `n_threads = -1` to auto-detect cores (the default in `edge264_test`) or a positive thread count, or `n_threads = 0` for the single-threaded path. Stock edge264's experimental multi-thread path was broken (pre-existing, reproducible on pristine edge264 even for non-MVC streams - a teardown deadlock, out-of-order output, an MVC stereo-pairing stall and data races); edge264-mvc makes multithreaded output **bit-exact to single-thread on every supported stream of the 231-stream JVT corpus**, hang-free under heavy thread oversubscription, and ThreadSanitizer-clean. It also keeps PR #25's single-threaded decode-hang fix ([PR #25](https://github.com/tvlabs/edge264/pull/25) · @intrepidsilence, `ready_tasks == 0`). The API is the original edge264's plus four POC fields on `Edge264Frame` (`Poc`, `Poc_mvc`, `DisplayPoc`, `DisplayPoc_mvc`).
 
 Worker threads decode consecutive pictures at the same time, the way FFmpeg's frame threading does: a picture starts as soon as the pictures it predicts from have started, and waits row by row until the reference rows it reads are decoded and deblocked. Slices of one picture are decoded in parallel too, and deblocked in order with their own parameters. Damaged pictures are concealed only where nothing was published yet, so the output stays the same whatever the number of threads. On a 1080p High Profile stream with 16 threads this is about 3x faster than the original scheduler, which only started a picture once its references were complete.
+
+**Performance** - every change keeps the output identical (verified on the full JVT corpus, single- and multithreaded), and each was measured by running the old and new build side by side on the same machine, so that other load hits both alike. Decoding several pictures at once is limited by memory bandwidth rather than by computation, so several of these changes reduce the bytes written and read per macroblock. Measured on an 8-core / 16-thread laptop CPU against FFmpeg on the same streams, decoding is 5% (4K) to 22% (1080p) faster with 16 threads, and 11% to 26% faster single-threaded (FFmpeg cannot decode the MVC dependent view, so MVC was compared on the base view):
+
+| Change | Effect |
+|---|---|
+| Start decoding a picture as soon as the pictures it predicts from are being decoded, waiting row by row for the reference rows it reads | about 3x faster on 1080p High Profile with 16 threads |
+| Wake only the tasks waiting on the picture that progressed, and let them sleep until two rows beyond what they need | about 95% fewer context switches |
+| Skip the weighted blend for inter predictions without weights | 5% to 7% fewer instructions on High Profile |
+| Skip the deblocking of macroblocks without any filtered edge | 6% to 21% fewer instructions, depending on the content |
+| Copy the chroma rows of integer motion vectors instead of interpolating them | 2% fewer instructions |
+| Average implicitly weighted predictions of equal weights like default ones | 1.7% fewer instructions on content using implicit weights |
+| Let a slice decoded before the preceding slice of its picture is finished leave its deblocking to the thread that finishes that slice, instead of blocking its worker | 6% faster on MVC Blu-ray streams (several slices per picture) with 16 threads |
+| Back large picture buffers with transparent huge pages on Linux | 2% to 3% faster with 16 threads, 3% single-threaded |
+| Prefetch the reference rows of the next macroblocks | 2.5% faster single-threaded, 1% to 1.5% with threads |
+| Keep the macroblock values only read by neighbours in a small per-thread ring instead of the per-picture array (304 to 192 bytes per macroblock) | 11% faster with 16 threads on MVC and 1080p, 3% single-threaded |
+| Leave the unused L1 motion vectors of P macroblocks unwritten | 5% faster on MVC with 16 threads, 1% on 1080p |
+| Stop prefetching the colocated macroblock of every B macroblock | 4% faster on 4K with 16 threads, 2% on MVC, 1% on 1080p |
 
 **MVC / stereo correctness** - the reason this project exists; verified on three commercial 1080p MVC streams with **0 pairing / 0 ordering errors over 2,500+ frame pairs**:
 
