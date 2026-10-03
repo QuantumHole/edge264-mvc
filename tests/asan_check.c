@@ -65,13 +65,23 @@ static int decode_all(const uint8_t *buf, size_t size) {
 	Edge264Frame f;
 	// Decode like a player: a damaged NAL (EBADMSG) is skipped rather than
 	// ending the stream, and the end of the stream drains the held frames.
+	// ENOBUFS promises a frame to drain before the same NAL is fed again, so a
+	// run of them without any frame is a stall the caller cannot resolve.
+	int stalled = 0;
 	while (nal < end) {
 		const uint8_t *sc = edge264_find_start_code(nal, end, 0);
 		res = edge264_decode_NAL(dec, nal, sc, NULL, NULL);
 		badmsg += res == EBADMSG;
-		while (edge264_get_frame(dec, &f, 0) == 0) {}
-		if (res != ENOBUFS)
+		int drained = 0;
+		while (edge264_get_frame(dec, &f, 0) == 0)
+			drained++;
+		if (res != ENOBUFS) {
 			nal = sc + 3;
+			stalled = 0;
+		} else if (drained == 0 && ++stalled > 64) {
+			edge264_free(&dec);
+			return -1;
+		}
 	}
 	for (int i = 0; i < 1000 && edge264_decode_NAL(dec, end, end, NULL, NULL) != ENODATA; i++)
 		while (edge264_get_frame(dec, &f, 0) == 0) {}
@@ -109,6 +119,11 @@ static int do_run(const char *manifest, const char *dir) {
 		// If a memory-safety regression is present, ASAN aborts here.
 		int badmsg = decode_all(buf, size);
 		munmap(buf, size);
+		if (badmsg < 0) {
+			printf(RED "FAIL" RESET " %s (stall: ENOBUFS without any frame to drain)\n", name);
+			fclose(mf);
+			return 1;
+		}
 		// A "clean" fixture is a valid stream: any EBADMSG is a regression (e.g.
 		// a small trailing SEI mis-skipped and misreturned as an invalid stream).
 		if (must_be_clean && badmsg != 0) {
