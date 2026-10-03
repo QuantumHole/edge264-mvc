@@ -1515,13 +1515,16 @@ static void CAFUNC(parse_P_sub_mb, unsigned ref_idx_flags)
 		int eq = refIdx4x4_eq.q[i];
 		int mvs_DC = eq & 8 ? ctx->mvs_D[i] : ctx->mvs_C[i];
 		if (__builtin_expect(0xe9e9 >> eq & 1, 1)) {
-			i16x8 mvA = (i32x4){mb->mvs_s[ctx->mvs_A[i]]};
-			i16x8 mvB = (i32x4){mb->mvs_s[ctx->mvs_B[i]]};
-			i16x8 mvDC = (i32x4){mb->mvs_s[mvs_DC]};
+			// neighbours are addressed relative to mvs_s across the macroblock array
+			const int32_t *mvs = (const int32_t *)((const char *)mb + offsetof(Edge264Macroblock, mvs_s));
+			i16x8 mvA = (i32x4){mvs[ctx->mvs_A[i]]};
+			i16x8 mvB = (i32x4){mvs[ctx->mvs_B[i]]};
+			i16x8 mvDC = (i32x4){mvs[mvs_DC]};
 			mvp = median16(mvA, mvB, mvDC);
 		} else {
 			int mvs_AB = eq & 1 ? ctx->mvs_A[i] : ctx->mvs_B[i];
-			mvp = (i32x4){mb->mvs_s[(eq & 4 ? mvs_DC : mvs_AB)]};
+			const int32_t *mvs = (const int32_t *)((const char *)mb + offsetof(Edge264Macroblock, mvs_s));
+			mvp = (i32x4){mvs[eq & 4 ? mvs_DC : mvs_AB]};
 		}
 		
 		// broadcast absMvd and mvs to memory then call decoding

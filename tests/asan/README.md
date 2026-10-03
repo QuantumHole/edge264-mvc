@@ -105,3 +105,9 @@ guard against sanitizer aborts and CPU-burn.
   and the SEI skip computed the bits left as `(int)(end - CPB) * 8`, which
   overflowed (undefined behaviour); bits_left now computes it in 64 bits for
   all three.
+- subpartition_neighbours.264: a fuzzer-found stream with B sub-macroblock
+  partitions. Their motion vector prediction read the neighbours A/B/C/D as
+  `mb->mvs_s[offset]` with negative offsets into the previous macroblocks, an
+  array subscript outside mvs_s[32] (undefined behaviour, reported by
+  UndefinedBehaviorSanitizer); it now indexes a pointer formed from the
+  macroblock address, which is what the offsets are relative to.
