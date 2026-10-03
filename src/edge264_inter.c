@@ -1209,7 +1209,9 @@ static void noinline decode_inter(Edge264Context *ctx, int i, int w, int h) {
 				int w1 = ctx->implicit_weights[refIdxX][refIdx] - 64;
 				int p = pack_w(64 - w1, w1);
 				wod = (u16x8){p, 32, 6, 6, p, p, 32, 32};
-
+				// equal weights round as the default average: (32q+32p+32)>>6 = (q+p+1)>>1
+				if (w1 == 32)
+					wod = (i16x8){257, 1, 1, 1, 257, 257, 1, 1};
 				// w0 or w1 will overflow if w1 is 128 or -64 (WARNING untested in conformance bitstreams)
 				if (__builtin_expect((unsigned)(w1 + 63) >= 191, 0)) {
 					p = pack_w(2 - (w1 >> 5), w1 >> 5);
