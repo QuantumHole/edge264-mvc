@@ -62,15 +62,20 @@ static int decode_all(const uint8_t *buf, size_t size) {
 	const uint8_t *nal = buf + 3 + (size > 2 && buf[2] == 0);
 	const uint8_t *end = buf + size;
 	int res, badmsg = 0;
-	do {
+	Edge264Frame f;
+	// Decode like a player: a damaged NAL (EBADMSG) is skipped rather than
+	// ending the stream, and the end of the stream drains the held frames.
+	while (nal < end) {
 		const uint8_t *sc = edge264_find_start_code(nal, end, 0);
 		res = edge264_decode_NAL(dec, nal, sc, NULL, NULL);
 		badmsg += res == EBADMSG;
-		Edge264Frame f;
 		while (edge264_get_frame(dec, &f, 0) == 0) {}
 		if (res != ENOBUFS)
 			nal = sc + 3;
-	} while (res == 0 || res == ENOBUFS || res == ENOTSUP);
+	}
+	for (int i = 0; i < 1000 && edge264_decode_NAL(dec, end, end, NULL, NULL) != ENODATA; i++)
+		while (edge264_get_frame(dec, &f, 0) == 0) {}
+	while (edge264_get_frame(dec, &f, 0) == 0) {}
 	edge264_free(&dec);
 	return badmsg;
 }
