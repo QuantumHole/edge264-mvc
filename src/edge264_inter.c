@@ -22,12 +22,16 @@ static noinline void wait_frame_progress(Edge264Context *ctx, int pic, int32_t a
 		if (__atomic_load_n(&dec->next_deblock_addr[pic], __ATOMIC_ACQUIRE) >= addr)
 			return;
 	}
+	// When it comes to sleeping, ask to be woken two rows beyond what we need,
+	// so that a task decoding faster than its reference does not sleep and
+	// wake at every row of it.
+	int32_t wake_addr = addr + 2 * ctx->t.pic_width_in_mbs;
 	pthread_mutex_lock(&dec->lock);
 	while (__atomic_load_n(&dec->next_deblock_addr[pic], __ATOMIC_ACQUIRE) < addr) {
 		// conceals pic (or a frame its pending writer depends on) if a damaged
 		// slice left it incomplete with no task left to finish it
 		if (!release_terminal_task_dependencies(dec))
-			pthread_cond_wait(&dec->task_progress, &dec->lock);
+			wait_frame_locked(dec, pic, wake_addr);
 	}
 	pthread_mutex_unlock(&dec->lock);
 }

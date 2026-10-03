@@ -1841,11 +1841,8 @@ static noinline void CAFUNC(parse_slice_data)
 			ctx->samples_mb[1] += ctx->t.stride[1] * 8 - ctx->t.pic_width_in_mbs * 8; // FIXME 4:2:2
 			ctx->samples_mb[2] += ctx->t.stride[1] * 8 - ctx->t.pic_width_in_mbs * 8;
 			if (ctx->t.next_deblock_idc >= 0) {
-				__atomic_store_n(&ctx->d->next_deblock_addr[ctx->t.next_deblock_idc],
-					(ctx->t.disable_deblocking_filter_idc != 1) ? ctx->t.next_deblock_addr : ctx->CurrMbAddr,
-					__ATOMIC_RELEASE);
-				// not locking mutex here is fine since the last progress broadcast will lock it
-				pthread_cond_broadcast(&ctx->d->task_progress);
+				publish_frame_progress(ctx->d, ctx->t.next_deblock_idc,
+					(ctx->t.disable_deblocking_filter_idc != 1) ? ctx->t.next_deblock_addr : ctx->CurrMbAddr);
 			}
 			if (ctx->mby >= ctx->t.pic_height_in_mbs)
 				return;

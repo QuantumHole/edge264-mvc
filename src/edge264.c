@@ -261,7 +261,10 @@ Edge264Decoder *edge264_alloc(int n_threads, Edge264LogCb log_cb, void *log_arg,
 		return dec;
 	if (pthread_mutex_init(&dec->lock, NULL) == 0) {
 		if (pthread_cond_init(&dec->task_ready, NULL) == 0) {
-			if (pthread_cond_init(&dec->task_progress, NULL) == 0) {
+			int conds = 0;
+			while (conds < 32 && pthread_cond_init(&dec->frame_progress[conds], NULL) == 0)
+				dec->progress_wake_addr[conds++] = INT_MAX;
+			if (conds == 32) {
 				if (pthread_cond_init(&dec->task_complete, NULL) == 0) {
 					int i = 0;
 					while (i < n_threads && pthread_create(&dec->threads[i], NULL, dec->worker_loop, (void *)((uintptr_t)dec + i)) == 0)
@@ -273,8 +276,9 @@ Edge264Decoder *edge264_alloc(int n_threads, Edge264LogCb log_cb, void *log_arg,
 						pthread_cancel(dec->threads[i]);
 					pthread_cond_destroy(&dec->task_complete);
 				}
-				pthread_cond_destroy(&dec->task_progress);
 			}
+			while (conds-- > 0)
+				pthread_cond_destroy(&dec->frame_progress[conds]);
 			pthread_cond_destroy(&dec->task_ready);
 		}
 		pthread_mutex_destroy(&dec->lock);
@@ -324,7 +328,8 @@ void edge264_free(Edge264Decoder **pdec) {
 			}
 			pthread_mutex_destroy(&dec->lock);
 			pthread_cond_destroy(&dec->task_ready);
-			pthread_cond_destroy(&dec->task_progress);
+			for (int i = 0; i < 32; i++)
+				pthread_cond_destroy(&dec->frame_progress[i]);
 			pthread_cond_destroy(&dec->task_complete);
 		}
 		for (int i = 0; i < 32; i++) {

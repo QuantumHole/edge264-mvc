@@ -622,7 +622,7 @@ static int wait_slice_turn(Edge264Context *c, int currPic) {
 			}
 			if (!preceding)
 				break;
-			pthread_cond_wait(&dec->task_progress, &dec->lock);
+			wait_frame_locked(dec, currPic, first);
 		}
 		pthread_mutex_unlock(&dec->lock);
 	}
@@ -736,11 +736,8 @@ void *ADD_VARIANT(worker_loop)(void *arg) {
 			recover_slice(&c, currPic, keep_mb);
 		
 		// update c.d->next_deblock_addr (atomic: read concurrently by other threads)
-		if (turn) {
-			__atomic_store_n(&c.d->next_deblock_addr[currPic], keep_mb, __ATOMIC_SEQ_CST);
-			if (c.thread_id >= 0)
-				pthread_cond_broadcast(&c.d->task_progress);
-		}
+		if (turn)
+			publish_frame_progress(c.d, currPic, keep_mb);
 
 		// deblock the rest of the frame if all mbs have been decoded correctly
 		// (only left when slices arrived out of order)
@@ -748,7 +745,7 @@ void *ADD_VARIANT(worker_loop)(void *arg) {
 		if (remaining_mbs == 0) {
 			int total_mbs = c.t.pic_width_in_mbs * c.t.pic_height_in_mbs;
 			deblock_range(&c, currPic, __atomic_load_n(&c.d->next_deblock_addr[currPic], __ATOMIC_ACQUIRE), total_mbs);
-			__atomic_store_n(&c.d->next_deblock_addr[currPic], INT_MAX, __ATOMIC_RELEASE); // signals the frame is complete
+			publish_frame_progress(c.d, currPic, INT_MAX); // signals the frame is complete
 		}
 		
 		// print benchmarking information
@@ -770,12 +767,16 @@ void *ADD_VARIANT(worker_loop)(void *arg) {
 		if (c.thread_id >= 0) {
 			pthread_mutex_lock(&c.d->lock);
 			pthread_cond_signal(&c.d->task_complete);
-			// Under the lock, so that a slice waiting for this one in
-			// wait_slice_turn cannot miss it: the unlocked broadcast after
-			// publishing the frontier may precede its wait. Also wakes the tasks
-			// waiting on a frame that this task leaves incomplete, so they see it
-			// has no writer left and conceal it.
-			pthread_cond_broadcast(&c.d->task_progress);
+			// Wake the slices waiting for this one in wait_slice_turn, which also
+			// wait on its leaving when it stops before them. A frame this task
+			// leaves incomplete may now have no writer left, so wake all waiters
+			// then, for them to conceal it if they need it.
+			if (remaining_mbs == 0) {
+				wake_frame_waiters(c.d, currPic);
+			} else {
+				for (int i = 0; i < 32; i++)
+					wake_frame_waiters(c.d, i);
+			}
 			if (remaining_mbs == 0) {
 				c.d->ready_tasks = ready_tasks(c.d);
 				if (c.d->ready_tasks)
@@ -1278,7 +1279,7 @@ static int conceal_frame(Edge264Decoder *dec, int id) {
 	__atomic_store_n(&dec->remaining_mbs[id], 0, __ATOMIC_RELEASE);
 	__atomic_store_n(&dec->next_deblock_addr[id], INT_MAX, __ATOMIC_RELEASE);
 	if (dec->n_threads)
-		pthread_cond_broadcast(&dec->task_progress);
+		wake_frame_waiters(dec, id);
 	return 1;
 }
 

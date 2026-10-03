@@ -381,7 +381,7 @@ typedef struct Edge264Decoder {
 	pthread_t threads[16];
 	pthread_mutex_t lock;
 	pthread_cond_t task_ready;
-	pthread_cond_t task_progress; // signals next_deblock_addr has been updated
+	pthread_cond_t frame_progress[32]; // signals next_deblock_addr[i] has reached progress_wake_addr[i]
 	pthread_cond_t task_complete;
 	Edge264Frame out;
 	
@@ -433,6 +433,7 @@ typedef struct Edge264Decoder {
 	uint16_t ready_tasks;
 	volatile union { uint32_t task_dependencies[16]; i32x4 task_dependencies_v[4]; }; // frames on which each task depends to start
 	union { int8_t taskPics[16]; i8x16 taskPics_v; }; // values of currPic for each task
+	int32_t progress_wake_addr[32]; // lowest next_deblock_addr a task waits for on each frame, or INT_MAX
 	uint32_t task_seq[16]; // decoding order of each task, workers pick the oldest ready task
 	uint32_t next_task_seq;
 	Edge264Task tasks[16];
@@ -1259,6 +1260,36 @@ static always_inline unsigned inflight_frames(Edge264Decoder *dec) {
 	for (unsigned b = dec->busy_tasks; b; b &= b - 1)
 		inflight |= 1u << dec->taskPics[__builtin_ctz(b)];
 	return inflight & ~ready_frames(dec);
+}
+// Wake the tasks waiting on the progress of frame pic (lock held).
+static always_inline void wake_frame_waiters(Edge264Decoder *dec, int pic) {
+	if (dec->progress_wake_addr[pic] != INT_MAX) {
+		__atomic_store_n(&dec->progress_wake_addr[pic], INT_MAX, __ATOMIC_RELAXED);
+		pthread_cond_broadcast(&dec->frame_progress[pic]);
+	}
+}
+// Advance the deblocking frontier of frame pic (lock not held), waking the
+// tasks waiting on it only once it reaches the lowest address they asked for,
+// so the frames being decoded do not wake every waiter at each row.
+static always_inline void publish_frame_progress(Edge264Decoder *dec, int pic, int32_t addr) {
+	__atomic_store_n(&dec->next_deblock_addr[pic], addr, __ATOMIC_SEQ_CST);
+	if (dec->n_threads && addr >= __atomic_load_n(&dec->progress_wake_addr[pic], __ATOMIC_SEQ_CST)) {
+		pthread_mutex_lock(&dec->lock);
+		wake_frame_waiters(dec, pic);
+		pthread_mutex_unlock(&dec->lock);
+	}
+}
+// Sleep until frame pic may have reached addr (lock held). The caller loops
+// on its condition, since waiters are also woken when a frame loses its last
+// writer or gets concealed. A seq_cst store of the wake address before the
+// caller's next check pairs with the seq_cst store-then-load in
+// publish_frame_progress, so either the waiter sees the new frontier or the
+// publisher sees the waiter.
+static always_inline void wait_frame_locked(Edge264Decoder *dec, int pic, int32_t addr) {
+	if (addr < dec->progress_wake_addr[pic])
+		__atomic_store_n(&dec->progress_wake_addr[pic], addr, __ATOMIC_SEQ_CST);
+	if (__atomic_load_n(&dec->next_deblock_addr[pic], __ATOMIC_SEQ_CST) < addr)
+		pthread_cond_wait(&dec->frame_progress[pic], &dec->lock);
 }
 // relative time with microsecond precision
 static always_inline uint64_t get_relative_time_us() {
