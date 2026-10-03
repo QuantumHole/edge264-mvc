@@ -156,8 +156,8 @@ static void test_page_boundaries() {
 			decode_inter_luma(i, BLEND_WEIGHTED, 4 << h, 32, page + pagesize + offInterHi[i] - (4 << h) * 32, 32, page + pagesize - (4 << (i >> 4)) - ((4 << h) - 1) * 32, (i8x16){});
 		}
 		for (int w = 0; w < 3; w++) {
-			decode_inter_chroma(BLEND_WEIGHTED, 4 << w, 4 << h, 32, page, 32, page, (i8x16){}, (i8x16){});
-			decode_inter_chroma(BLEND_WEIGHTED, 4 << w, 4 << h, 32, page + pagesize + offInterHiC[w] - (4 << h) * 32, 32, page + pagesize - (4 << w) - ((4 << h) - 1) * 32, (i8x16){}, (i8x16){});
+			decode_inter_chroma(BLEND_WEIGHTED, 0, 4 << w, 4 << h, 32, page, 32, page, (i8x16){}, (i8x16){});
+			decode_inter_chroma(BLEND_WEIGHTED, 0, 4 << w, 4 << h, 32, page + pagesize + offInterHiC[w] - (4 << h) * 32, 32, page + pagesize - (4 << w) - ((4 << h) - 1) * 32, (i8x16){}, (i8x16){});
 		}
 	}
 	PASSERT(!munmap(page - pagesize, pagesize * 3), NULL);
@@ -349,11 +349,11 @@ static void test_inter_decoding() {
 	// execute Inter chroma modes and compare to expected block values
 	i8x16 ABCD = {3, 21, 5, 35};
 	i8x16 wod = {0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0};
-	decode_inter_chroma(BLEND_WEIGHTED, 16, 16, 21, src + 44, 16, dst, ABCD, wod);
+	decode_inter_chroma(BLEND_WEIGHTED, 0, 16, 16, 21, src + 44, 16, dst, ABCD, wod);
 	assert_block("INTER_CHROMA_16x16", 16, dst, 8, 16, (uint8_t[]){136, 173, 210, 107, 40, 65, 102, 139, 145, 182, 219, 116, 49, 74, 111, 148, 154, 191, 228, 41, 46, 83, 120, 157, 163, 200, 237, 50, 55, 92, 129, 166, 172, 209, 106, 39, 64, 101, 138, 175, 181, 218, 115, 48, 73, 110, 147, 184, 190, 227, 40, 45, 82, 119, 156, 193, 199, 236, 49, 54, 91, 128, 165, 202, 208, 105, 38, 63, 100, 137, 174, 211, 217, 114, 47, 72, 109, 146, 183, 220, 226, 39, 44, 81, 118, 155, 192, 229, 235, 48, 53, 90, 127, 164, 201, 238, 244, 57, 62, 99, 136, 173, 210, 107, 113, 46, 71, 108, 145, 182, 219, 116, 122, 55, 80, 117, 154, 191, 228, 41, 47, 52, 89, 126, 163, 200, 237, 50});
-	decode_inter_chroma(BLEND_WEIGHTED, 8, 16, 21, src + 44, 16, dst, ABCD, wod);
+	decode_inter_chroma(BLEND_WEIGHTED, 0, 8, 16, 21, src + 44, 16, dst, ABCD, wod);
 	assert_block("INTER_CHROMA_8x16", 16, dst, 4, 16, (uint8_t[]){136, 173, 210, 107, 145, 182, 219, 116, 154, 191, 228, 41, 163, 200, 237, 50, 172, 209, 106, 39, 181, 218, 115, 48, 190, 227, 40, 45, 199, 236, 49, 54, 208, 105, 38, 63, 217, 114, 47, 72, 226, 39, 44, 81, 235, 48, 53, 90, 244, 57, 62, 99, 113, 46, 71, 108, 122, 55, 80, 117, 47, 52, 89, 126});
-	decode_inter_chroma(BLEND_WEIGHTED, 4, 8, 21, src + 44, 16, dst, ABCD, wod);
+	decode_inter_chroma(BLEND_WEIGHTED, 0, 4, 8, 21, src + 44, 16, dst, ABCD, wod);
 	assert_block("INTER_CHROMA_4x8", 16, dst, 2, 8, (uint8_t[]){136, 173, 145, 182, 154, 191, 163, 200, 172, 209, 181, 218, 190, 227, 199, 236});
 	count_pass += 1;
 }

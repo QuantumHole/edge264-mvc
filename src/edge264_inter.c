@@ -1027,7 +1027,7 @@ static void decode_inter_luma(int mode, int kind, int h, size_t sstride, const u
  * 
  * dstride and sstride are half the strides of src and dst chroma planes.
  */
-static void decode_inter_chroma(int kind, int w, int h, size_t sstride, const uint8_t *src, size_t dstride, uint8_t *dst, i8x16 ABCD, i16x8 wod) {
+static void decode_inter_chroma(int kind, int integer, int w, int h, size_t sstride, const uint8_t *src, size_t dstride, uint8_t *dst, i8x16 ABCD, i16x8 wod) {
 	#if SIMD == SSE
 		i8x16 AB = broadcast16(ABCD, 0);
 		i8x16 CD = broadcast16(ABCD, 1);
@@ -1070,9 +1070,9 @@ static void decode_inter_chroma(int kind, int w, int h, size_t sstride, const ui
 			src = SADDR(src,  2);
 			i8x16 l2 = loadu128(SADDR(src,  0));
 			i8x16 l3 = loadu128(SADDR(src,  1));
-			i16x8 x0 = maddABCD(l0, l2, shuf, AB, CD);
-			i16x8 x1 = maddABCD(l1, l3, shuf, AB, CD);
-			i8x16 p = shrrpu16(x0, x1, 6);
+			// an integer vector (most of them) only copies the Cb and Cr rows
+			i8x16 p = integer ? (i8x16)ziplo64(l0, l1) :
+				(i8x16)shrrpu16(maddABCD(l0, l2, shuf, AB, CD), maddABCD(l1, l3, shuf, AB, CD), 6);
 			i8x16 q = loada64x2(DADDR(dst,  0), DADDR(dst,  1));
 			i64x2 v = blendC16(kind, q, p, w0, w1, w2, w3, oCb, oCr, wd);
 			*(int64_t *)DADDR(dst,  0) = v[0];
@@ -1209,6 +1209,7 @@ static void noinline decode_inter(Edge264Context *ctx, int i, int w, int h) {
 				int w1 = ctx->implicit_weights[refIdxX][refIdx] - 64;
 				int p = pack_w(64 - w1, w1);
 				wod = (u16x8){p, 32, 6, 6, p, p, 32, 32};
+
 				// w0 or w1 will overflow if w1 is 128 or -64 (WARNING untested in conformance bitstreams)
 				if (__builtin_expect((unsigned)(w1 + 63) >= 191, 0)) {
 					p = pack_w(2 - (w1 >> 5), w1 >> 5);
@@ -1315,7 +1316,7 @@ static void noinline decode_inter(Edge264Context *ctx, int i, int w, int h) {
 	int xFrac_C = x & 7;
 	int yFrac_C = y & 7;
 	i32x4 ABCD = {little_endian32(((8 - xFrac_C) | xFrac_C << 8) * ((8 - yFrac_C) | yFrac_C << 16))};
-	decode_inter_chroma(kind, w, h, sstride_C, src_C, dstride_C, dst_C, ABCD, wod);
+	decode_inter_chroma(kind, (x & 7) == 0 && (y & 7) == 0, w, h, sstride_C, src_C, dstride_C, dst_C, ABCD, wod);
 	
 	// tail jump to luma prediction
 	int xFrac_Y = x & 3;
