@@ -169,8 +169,8 @@ int ADD_VARIANT(parse_sei)(Edge264Decoder *dec, Edge264UnrefCb unref_cb, void *u
 		// 7.3.2.3.1), and bits_left never exceeds the real NAL size, so a crafted
 		// ~INT_MAX payloadSize cannot spin.
 		dec->gb = start;
-		int bits_left = (int)(dec->gb.end - dec->gb.CPB) * 8 + SIZE_BIT * 2 - 1 - ctz(dec->gb.lsb_cache);
-		for (unsigned n = payloadSize; n-- > 0 && bits_left >= 8; bits_left -= 8)
+		int64_t left = bits_left(&dec->gb);
+		for (unsigned n = payloadSize; n-- > 0 && left >= 8; left -= 8)
 			get_uv(&dec->gb, 8);
 	}
 	return rbsp_end(&dec->gb, 1) ? nal_ret : EBADMSG;

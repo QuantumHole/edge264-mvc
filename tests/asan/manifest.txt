@@ -11,3 +11,4 @@ signed_shifts
 cavlc_run_before_zeros
 recover_p_slice
 unaligned_loads
+reader_overrun

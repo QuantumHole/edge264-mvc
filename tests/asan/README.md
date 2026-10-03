@@ -100,3 +100,8 @@ guard against sanitizer aborts and CPU-burn.
   loadu32x4 and loadu64x2 dereferenced cast int32_t / int64_t pointers, which
   is undefined on an unaligned address; they now load through memcpy, like the
   NEON and generic versions, which compiles to the same single moves.
+- reader_overrun.264: a fuzzer-found stream whose damaged NALs leave the bit
+  reader hundreds of MB past their end. rbsp_end, the SPS trailing-bits check
+  and the SEI skip computed the bits left as `(int)(end - CPB) * 8`, which
+  overflowed (undefined behaviour); bits_left now computes it in 64 bits for
+  all three.

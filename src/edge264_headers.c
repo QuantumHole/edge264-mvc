@@ -2748,7 +2748,7 @@ int ADD_VARIANT(parse_seq_parameter_set)(Edge264Decoder *dec, Edge264UnrefCb unr
 		// decoders); a larger gap means the bit position is genuinely off and
 		// the SPS is dropped. The cast turns an over-read (negative) into a
 		// large unsigned value, so it is rejected too.
-		int bits_to_end = (int)(dec->gb.end - dec->gb.CPB) * 8 + SIZE_BIT * 2 - 2 - ctz(dec->gb.lsb_cache);
+		int64_t bits_to_end = bits_left(&dec->gb) - 1;
 		if (dec->nal_unit_type == 7 && vui_present) {
 			// A malformed VUI (a common encoder bug ffmpeg reports as "Overread
 			// VUI by N bits" and tolerates) leaves the bit position off at the end
@@ -2759,7 +2759,7 @@ int ADD_VARIANT(parse_seq_parameter_set)(Edge264Decoder *dec, Edge264UnrefCb unr
 			// defaults so nothing from the over-read leaks into the DPB sizing.
 			sps.max_num_reorder_frames = inferred_max_num_reorder_frames;
 			sps.max_dec_frame_buffering = inferred_max_dec_frame_buffering;
-		} else if (dec->nal_unit_type != 15 || (unsigned)bits_to_end > 16) {
+		} else if (dec->nal_unit_type != 15 || (uint64_t)bits_to_end > 16) {
 			ret = EBADMSG;
 		}
 	}

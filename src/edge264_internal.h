@@ -1215,12 +1215,17 @@ static always_inline i8x16 pack_absMvd(i16x8 a) {
 	i16x8 x = broadcast32(a, 0);
 	return abs8(packs16(x, x));
 }
+// Bits left to read before the end of the NAL, negative once the reader overran
+// it - in 64 bits, since a reader on a damaged NAL may be far past its end.
+static always_inline int64_t bits_left(Edge264GetBits *gb) {
+	return (int64_t)(gb->end - gb->CPB) * 8 + SIZE_BIT * 2 - 1 - ctz(gb->lsb_cache);
+}
 static always_inline int rbsp_end(Edge264GetBits *gb, int trailing_bit) {
-	int bits_to_end = (int)(gb->end - gb->CPB) * 8 + SIZE_BIT * 2 - 1 - ctz(gb->lsb_cache) - trailing_bit;
+	int64_t bits_to_end = bits_left(gb) - trailing_bit;
 	// all bits after trailing set bit must be zero AND there must be 0-7 bits left before end (0 for no trailing bit)
 	return gb->msb_cache == (size_t)trailing_bit << (SIZE_BIT - 1) &&
 	       (gb->lsb_cache & (gb->lsb_cache - 1)) == 0 &&
-	       (unsigned)bits_to_end <= 7 * trailing_bit;
+	       (uint64_t)bits_to_end <= 7u * trailing_bit;
 }
 #ifndef __builtin_clzg // works as long as __builtin_clzg is a macro
 	static always_inline int __builtin_clzg(unsigned a, int b) { return a ? __builtin_clz(a) : b; }
