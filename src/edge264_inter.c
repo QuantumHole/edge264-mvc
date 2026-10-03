@@ -1197,6 +1197,18 @@ static void noinline decode_inter(Edge264Context *ctx, int i, int w, int h) {
 		__builtin_prefetch(pref_Y + 23, 0, 1);
 	}
 	
+	// For the first partition of a macroblock, also prefetch the reference rows
+	// of the macroblocks 128 bytes further right, which likely move alike, so
+	// that they are in cache when decoded rather than when about to be read.
+	if (i == 0) {
+		const uint8_t *ahead_Y = src_Y - sstride_Y * 2 + 128;
+		for (int y = 21; y-- > 0; ahead_Y += sstride_Y)
+			__builtin_prefetch(ahead_Y, 0, 1);
+		const uint8_t *ahead_C = src_C + 64;
+		for (int y = 18; y-- > 0; ahead_C += sstride_C)
+			__builtin_prefetch(ahead_C, 0, 1);
+	}
+	
 	// prediction coeffs {wY, oY, logWD_Y, logWD_C, wCb, wCr, oCb, oCr}
 	i16x8 wod = {pack_w(0, 1), 0, 0, 0, pack_w(0, 1), pack_w(0, 1), 0, 0}; // no_weight
 	int refIdx = mb->refIdx[i8x8];
