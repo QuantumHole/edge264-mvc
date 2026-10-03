@@ -399,6 +399,20 @@ enum {
 
 
 /**
+ * Blending a prediction into dst, which only uses the weighted formula when
+ * actual weights are signaled: a single prediction is stored as is and the
+ * default bi-prediction is the rounded average. These give the same samples as
+ * the weighted formula with the default weights, at a fraction of its cost.
+ * kind is constant over each block, so the compiler unswitches the loops on it
+ * and drops the loads of dst for kind 0.
+ */
+enum { BLEND_COPY, BLEND_AVG, BLEND_WEIGHTED };
+#define blendL(kind, q, p, w0, w1, o, wd) ((kind) == BLEND_COPY ? (i8x16)(p) : (kind) == BLEND_AVG ? (i8x16)avgu8(q, p) : (i8x16)maddshrL(q, p, w0, w1, o, wd))
+#define blendC16(kind, q, p, w0, w1, w2, w3, oCb, oCr, wd) ((kind) == BLEND_COPY ? (i8x16)(p) : (kind) == BLEND_AVG ? (i8x16)avgu8(q, p) : (i8x16)maddshrC16(q, p, w0, w1, w2, w3, oCb, oCr, wd))
+#define blendC8(kind, q, p, w0, w1, o, wd) ((kind) == BLEND_COPY ? (i8x16)(p) : (kind) == BLEND_AVG ? (i8x16)avgu8(q, p) : (i8x16)maddshrC8(q, p, w0, w1, o, wd))
+#define blendC4(kind, q, p, w0, w1, o, wd) ((kind) == BLEND_COPY ? (i8x16)(p) : (kind) == BLEND_AVG ? (i8x16)avgu8(q, p) : (i8x16)maddshrC4(q, p, w0, w1, o, wd))
+
+/**
  * Inter 4x{4/8} prediction takes a 9x{9/13} matrix of 8/16bit luma samples as
  * input, and outputs a 4x{4/8} matrix in memory.
  * Loads are generally done by 8x1 matrices denoted as lRC in the code (R=row,
@@ -452,7 +466,7 @@ enum {
  * to duplicate a lot of code. The same goes for sixtap functions, which would
  * force all live vector registers on stack if not inlined.
  */
-static void decode_inter_luma(int mode, int h, size_t sstride, const uint8_t * restrict src2, size_t dstride, uint8_t * restrict dst, i16x8 wod) {
+static void decode_inter_luma(int mode, int kind, int h, size_t sstride, const uint8_t * restrict src2, size_t dstride, uint8_t * restrict dst, i16x8 wod) {
 	#if SIMD == SSE
 		i8x16 w0 = broadcast16(wod, 0);
 		i8x16 w1 = w0;
@@ -487,7 +501,7 @@ static void decode_inter_luma(int mode, int h, size_t sstride, const uint8_t * r
 		do {
 			i32x4 p = loadu32x4(SADDR(src2, 0), SADDR(src2, 1), SADDR(src2, 2), SADDR(src2, 3));
 			i32x4 q = loada32x4(DADDR(dst,  0), DADDR(dst,  1), DADDR(dst,  2), DADDR(dst,  3));
-			i32x4 r = maddshrL(q, p, w0, w1, o, wd);
+			i32x4 r = blendL(kind, q, p, w0, w1, o, wd);
 			*(int32_t *)DADDR(dst,  0) = r[0];
 			*(int32_t *)DADDR(dst,  1) = r[1];
 			*(int32_t *)DADDR(dst,  2) = r[2];
@@ -510,7 +524,7 @@ static void decode_inter_luma(int mode, int h, size_t sstride, const uint8_t * r
 			i8x16 s1 = shuffle(ziplo64(l4, l5), shufx);
 			i8x16 s = unziplo32(s0, s1);
 			i32x4 q = loada32x4(DADDR(dst,  0), DADDR(dst,  1), DADDR(dst,  2), DADDR(dst,  3));
-			i32x4 r = maddshrL(q, avgu8(ifelse_mask(m1, h01, s), h01), w0, w1, o, wd);
+			i32x4 r = blendL(kind, q, avgu8(ifelse_mask(m1, h01, s), h01), w0, w1, o, wd);
 			*(int32_t *)DADDR(dst,  0) = r[0];
 			*(int32_t *)DADDR(dst,  1) = r[1];
 			*(int32_t *)DADDR(dst,  2) = r[2];
@@ -536,7 +550,7 @@ static void decode_inter_luma(int mode, int h, size_t sstride, const uint8_t * r
 			i8x16 v01 = shrrpus16(v0, v1, 5);
 			i8x16 s = ifelse_mask(m1, v01, ifelse_mask(m0, m32, m22));
 			i32x4 q = loada32x4(DADDR(dst,  0), DADDR(dst,  1), DADDR(dst,  2), DADDR(dst,  3));
-			i32x4 r = maddshrL(q, avgu8(s, v01), w0, w1, o, wd);
+			i32x4 r = blendL(kind, q, avgu8(s, v01), w0, w1, o, wd);
 			*(int32_t *)DADDR(dst,  0) = r[0];
 			*(int32_t *)DADDR(dst,  1) = r[1];
 			*(int32_t *)DADDR(dst,  2) = r[2];
@@ -585,7 +599,7 @@ static void decode_inter_luma(int mode, int h, size_t sstride, const uint8_t * r
 			i16x8 h1 = sixtapH4(ifelse_mask(m1, l5, l4), ifelse_mask(m1, l6, l5));
 			i8x16 s = avgu8(v01, shrrpus16(h0, h1, 5));
 			i32x4 q = loada32x4(DADDR(dst,  0), DADDR(dst,  1), DADDR(dst,  2), DADDR(dst,  3));
-			i32x4 r = maddshrL(q, s, w0, w1, o, wd);
+			i32x4 r = blendL(kind, q, s, w0, w1, o, wd);
 			*(int32_t *)DADDR(dst,  0) = r[0];
 			*(int32_t *)DADDR(dst,  1) = r[1];
 			*(int32_t *)DADDR(dst,  2) = r[2];
@@ -637,7 +651,7 @@ static void decode_inter_luma(int mode, int h, size_t sstride, const uint8_t * r
 			i8x16 vh = shrrpus16(vh0, vh1, 6);
 			i8x16 s = shrrpus16(ifelse_mask(m0, m03, m02), ifelse_mask(m0, m23, m22), 5);
 			i32x4 q = loada32x4(DADDR(dst,  0), DADDR(dst,  1), DADDR(dst,  2), DADDR(dst,  3));
-			i32x4 r = maddshrL(q, avgu8(s, vh), w0, w1, o, wd);
+			i32x4 r = blendL(kind, q, avgu8(s, vh), w0, w1, o, wd);
 			*(int32_t *)DADDR(dst,  0) = r[0];
 			*(int32_t *)DADDR(dst,  1) = r[1];
 			*(int32_t *)DADDR(dst,  2) = r[2];
@@ -674,7 +688,7 @@ static void decode_inter_luma(int mode, int h, size_t sstride, const uint8_t * r
 			i8x16 hv = shrrpus16(hv0, hv1, 6);
 			i8x16 s = shrrpus16(ifelse_mask(m0, h3, h2), ifelse_mask(m0, h5, h4), 5);
 			i32x4 q = loada32x4(DADDR(dst,  0), DADDR(dst,  1), DADDR(dst,  2), DADDR(dst,  3));
-			i32x4 r = maddshrL(q, avgu8(ifelse_mask(m1, hv, s), hv), w0, w1, o, wd);
+			i32x4 r = blendL(kind, q, avgu8(ifelse_mask(m1, hv, s), hv), w0, w1, o, wd);
 			*(int32_t *)DADDR(dst,  0) = r[0];
 			*(int32_t *)DADDR(dst,  1) = r[1];
 			*(int32_t *)DADDR(dst,  2) = r[2];
@@ -690,8 +704,8 @@ static void decode_inter_luma(int mode, int h, size_t sstride, const uint8_t * r
 			i8x16 p1 = loadu64x2(SADDR(src2,  2), SADDR(src2,  3));
 			i8x16 q0 = loadu64x2(DADDR(dst,  0), DADDR(dst,  1));
 			i8x16 q1 = loadu64x2(DADDR(dst,  2), DADDR(dst,  3));
-			i64x2 r0 = maddshrL(q0, p0, w0, w1, o, wd);
-			i64x2 r1 = maddshrL(q1, p1, w0, w1, o, wd);
+			i64x2 r0 = blendL(kind, q0, p0, w0, w1, o, wd);
+			i64x2 r1 = blendL(kind, q1, p1, w0, w1, o, wd);
 			*(int64_t *)DADDR(dst,  0) = r0[0];
 			*(int64_t *)DADDR(dst,  1) = r0[1];
 			*(int64_t *)DADDR(dst,  2) = r1[0];
@@ -710,7 +724,7 @@ static void decode_inter_luma(int mode, int h, size_t sstride, const uint8_t * r
 			i8x16 h01 = shrrpus16(sixtapH8(l0), sixtapH8(l1), 5);
 			i8x16 s = ziplo64(shuffle(l0, shufx), shuffle(l1, shufx));
 			i8x16 q = loada64x2(DADDR(dst,  0), DADDR(dst,  1));
-			i64x2 r = maddshrL(q, avgu8(ifelse_mask(m1, h01, s), h01), w0, w1, o, wd);
+			i64x2 r = blendL(kind, q, avgu8(ifelse_mask(m1, h01, s), h01), w0, w1, o, wd);
 			*(int64_t *)DADDR(dst,  0) = r[0];
 			*(int64_t *)DADDR(dst,  1) = r[1];
 			src0 = SADDR(src0,  2);
@@ -735,7 +749,7 @@ static void decode_inter_luma(int mode, int h, size_t sstride, const uint8_t * r
 			i8x16 v01 = shrrpus16(v0, v1, 5);
 			i8x16 s = ifelse_mask(m0, ziplo64(l3, l4), ziplo64(l2, l3));
 			i8x16 q = loada64x2(DADDR(dst,  0), DADDR(dst,  1));
-			i64x2 r = maddshrL(q, avgu8(ifelse_mask(m1, v01, s), v01), w0, w1, o, wd);
+			i64x2 r = blendL(kind, q, avgu8(ifelse_mask(m1, v01, s), v01), w0, w1, o, wd);
 			*(int64_t *)DADDR(dst,  0) = r[0];
 			*(int64_t *)DADDR(dst,  1) = r[1];
 			l0 = l2, l1 = l3, l2 = l4, l3 = l5, l4 = l6;
@@ -768,7 +782,7 @@ static void decode_inter_luma(int mode, int h, size_t sstride, const uint8_t * r
 			i16x8 h1 = sixtapH8(ifelse_mask(m1, l4, l3));
 			i8x16 s = avgu8(v01, shrrpus16(h0, h1, 5));
 			i8x16 q = loada64x2(DADDR(dst,  0), DADDR(dst,  1));
-			i64x2 r = maddshrL(q, s, w0, w1, o, wd);
+			i64x2 r = blendL(kind, q, s, w0, w1, o, wd);
 			*(int64_t *)DADDR(dst,  0) = r[0];
 			*(int64_t *)DADDR(dst,  1) = r[1];
 			l02 = l22, l12 = l32, l2 = l4, l3 = l5;
@@ -807,7 +821,7 @@ static void decode_inter_luma(int mode, int h, size_t sstride, const uint8_t * r
 			i8x16 vh = shrrpus16(vh0, vh1, 6);
 			i8x16 s = shrrpus16(ifelse_mask(m0, x03, x02), ifelse_mask(m0, x13, x12), 5);
 			i8x16 q = loada64x2(DADDR(dst,  0), DADDR(dst,  1));
-			i64x2 r = maddshrL(q, avgu8(vh, s), w0, w1, o, wd);
+			i64x2 r = blendL(kind, q, avgu8(vh, s), w0, w1, o, wd);
 			*(int64_t *)DADDR(dst,  0) = r[0];
 			*(int64_t *)DADDR(dst,  1) = r[1];
 			l0 = l2, l1 = l3, l2 = l4, l3 = l5, l4 = l6;
@@ -832,7 +846,7 @@ static void decode_inter_luma(int mode, int h, size_t sstride, const uint8_t * r
 			i8x16 hv = shrrpus16(hv0, hv1, 6);
 			i8x16 s = shrrpus16(ifelse_mask(m0, v3, v2), ifelse_mask(m0, v4, v3), 5);
 			i8x16 q = loada64x2(DADDR(dst,  0), DADDR(dst,  1));
-			i64x2 r = maddshrL(q, avgu8(ifelse_mask(m1, hv, s), hv), w0, w1, o, wd);
+			i64x2 r = blendL(kind, q, avgu8(ifelse_mask(m1, hv, s), hv), w0, w1, o, wd);
 			*(int64_t *)DADDR(dst,  0) = r[0];
 			*(int64_t *)DADDR(dst,  1) = r[1];
 			v0 = v2, v1 = v3, v2 = v4, v3 = v5, v4 = v6;
@@ -842,10 +856,10 @@ static void decode_inter_luma(int mode, int h, size_t sstride, const uint8_t * r
 	
 	case INTER_16xH_QPEL_00:
 		do {
-			*(i8x16 *)DADDR(dst,  0) = maddshrL(*(i8x16 *)DADDR(dst,  0), loadu128(SADDR(src2,  0)), w0, w1, o, wd);
-			*(i8x16 *)DADDR(dst,  1) = maddshrL(*(i8x16 *)DADDR(dst,  1), loadu128(SADDR(src2,  1)), w0, w1, o, wd);
-			*(i8x16 *)DADDR(dst,  2) = maddshrL(*(i8x16 *)DADDR(dst,  2), loadu128(SADDR(src2,  2)), w0, w1, o, wd);
-			*(i8x16 *)DADDR(dst,  3) = maddshrL(*(i8x16 *)DADDR(dst,  3), loadu128(SADDR(src2,  3)), w0, w1, o, wd);
+			*(i8x16 *)DADDR(dst,  0) = blendL(kind, *(i8x16 *)DADDR(dst,  0), loadu128(SADDR(src2,  0)), w0, w1, o, wd);
+			*(i8x16 *)DADDR(dst,  1) = blendL(kind, *(i8x16 *)DADDR(dst,  1), loadu128(SADDR(src2,  1)), w0, w1, o, wd);
+			*(i8x16 *)DADDR(dst,  2) = blendL(kind, *(i8x16 *)DADDR(dst,  2), loadu128(SADDR(src2,  2)), w0, w1, o, wd);
+			*(i8x16 *)DADDR(dst,  3) = blendL(kind, *(i8x16 *)DADDR(dst,  3), loadu128(SADDR(src2,  3)), w0, w1, o, wd);
 			src2 = SADDR(src2, 4);
 			dst = DADDR(dst,  4);
 		} while (h -= 4);
@@ -860,7 +874,7 @@ static void decode_inter_luma(int mode, int h, size_t sstride, const uint8_t * r
 			SIXTAPH16(h0, h8, l0, lG);
 			i8x16 h01 = shrrpus16(h0, h8, 5);
 			i8x16 s = ifelse_mask(m1, h01, shuffle2(l0, lG, shufx));
-			*(i8x16 *)dst = maddshrL(*(i8x16 *)dst, avgu8(s, h01), w0, w1, o, wd);
+			*(i8x16 *)dst = blendL(kind, *(i8x16 *)dst, avgu8(s, h01), w0, w1, o, wd);
 			src0 = SADDR(src0,  1);
 			dst = DADDR(dst,  1);
 		} while (h -= 1);
@@ -881,7 +895,7 @@ static void decode_inter_luma(int mode, int h, size_t sstride, const uint8_t * r
 			i16x8 v8 = sixtapVhi(l0, l1, l2, l3, l4, l5);
 			i8x16 v01 = shrrpus16(v0, v8, 5);
 			i8x16 s = ifelse_mask(m1, v01, ifelse_mask(m0, l3, l2));
-			*(i8x16 *)dst = maddshrL(*(i8x16 *)dst, avgu8(s, v01), w0, w1, o, wd);
+			*(i8x16 *)dst = blendL(kind, *(i8x16 *)dst, avgu8(s, v01), w0, w1, o, wd);
 			l0 = l1, l1 = l2, l2 = l3, l3 = l4, l4 = l5;
 			dst = DADDR(dst,  1);
 		} while (h -= 1);
@@ -916,7 +930,7 @@ static void decode_inter_luma(int mode, int h, size_t sstride, const uint8_t * r
 			i8x16 s1 = ifelse_mask(m1, l3G, l2G);
 			SIXTAPH16(h0, h1, s0, s1);
 			i8x16 h01 = shrrpus16(h0, h1, 5);
-			*(i8x16 *)dst = maddshrL(*(i8x16 *)dst, avgu8(v01, h01), w0, w1, o, wd);
+			*(i8x16 *)dst = blendL(kind, *(i8x16 *)dst, avgu8(v01, h01), w0, w1, o, wd);
 			l02 = l12, l12 = l22;
 			l20 = l30, l2G = l3G, l30 = l40, l3G = l4G, l40 = l50, l4G = l5G;
 			dst = DADDR(dst,  1);
@@ -958,7 +972,7 @@ static void decode_inter_luma(int mode, int h, size_t sstride, const uint8_t * r
 			i16x8 vh1 = sixtapHV(v8, v9, vA, vB, vC, vD);
 			i8x16 vh = shrrpus16(vh0, vh1, 6);
 			i8x16 s = shrrpus16(ifelse_mask(m0, v3, v2), ifelse_mask(m0, vB, vA), 5);
-			*(i8x16 *)dst = maddshrL(*(i8x16 *)dst, avgu8(s, vh), w0, w1, o, wd);
+			*(i8x16 *)dst = blendL(kind, *(i8x16 *)dst, avgu8(s, vh), w0, w1, o, wd);
 			l00 = l10, l10 = l20, l20 = l30, l30 = l40, l40 = l50;
 			l0G = l1G, l1G = l2G, l2G = l3G, l3G = l4G, l4G = l5G;
 			dst = DADDR(dst,  1);
@@ -994,7 +1008,7 @@ static void decode_inter_luma(int mode, int h, size_t sstride, const uint8_t * r
 			i16x8 hv1 = sixtapHV(h01, h11, h21, h31, h41, h51);
 			i8x16 hv = shrrpus16(hv0, hv1, 6);
 			i8x16 s = shrrpus16(ifelse_mask(m0, h30, h20), ifelse_mask(m0, h31, h21), 5);
-			*(i8x16 *)dst = maddshrL(*(i8x16 *)dst, avgu8(ifelse_mask(m1, hv, s), hv), w0, w1, o, wd);
+			*(i8x16 *)dst = blendL(kind, *(i8x16 *)dst, avgu8(ifelse_mask(m1, hv, s), hv), w0, w1, o, wd);
 			h00 = h10, h01 = h11;
 			h10 = h20, h11 = h21;
 			h20 = h30, h21 = h31;
@@ -1013,7 +1027,7 @@ static void decode_inter_luma(int mode, int h, size_t sstride, const uint8_t * r
  * 
  * dstride and sstride are half the strides of src and dst chroma planes.
  */
-static void decode_inter_chroma(int w, int h, size_t sstride, const uint8_t *src, size_t dstride, uint8_t *dst, i8x16 ABCD, i16x8 wod) {
+static void decode_inter_chroma(int kind, int w, int h, size_t sstride, const uint8_t *src, size_t dstride, uint8_t *dst, i8x16 ABCD, i16x8 wod) {
 	#if SIMD == SSE
 		i8x16 AB = broadcast16(ABCD, 0);
 		i8x16 CD = broadcast16(ABCD, 1);
@@ -1060,7 +1074,7 @@ static void decode_inter_chroma(int w, int h, size_t sstride, const uint8_t *src
 			i16x8 x1 = maddABCD(l1, l3, shuf, AB, CD);
 			i8x16 p = shrrpu16(x0, x1, 6);
 			i8x16 q = loada64x2(DADDR(dst,  0), DADDR(dst,  1));
-			i64x2 v = maddshrC16(q, p, w0, w1, w2, w3, oCb, oCr, wd);
+			i64x2 v = blendC16(kind, q, p, w0, w1, w2, w3, oCb, oCr, wd);
 			*(int64_t *)DADDR(dst,  0) = v[0];
 			*(int64_t *)DADDR(dst,  1) = v[1];
 			dst = DADDR(dst,  2);
@@ -1088,7 +1102,7 @@ static void decode_inter_chroma(int w, int h, size_t sstride, const uint8_t *src
 			i16x8 x1 = maddABCD(l1, l2, shuf, AB, CD);
 			i8x16 p = shrrpu16(x0, x1, 6);
 			i8x16 q = loada32x4(DADDR(dst,  0), DADDR(dst,  1), DADDR(dst,  2), DADDR(dst,  3));
-			i32x4 v = maddshrC8(q, p, w0, w1, o, wd);
+			i32x4 v = blendC8(kind, q, p, w0, w1, o, wd);
 			*(int32_t *)DADDR(dst,  0) = v[0];
 			*(int32_t *)DADDR(dst,  1) = v[1];
 			*(int32_t *)DADDR(dst,  2) = v[2];
@@ -1117,7 +1131,7 @@ static void decode_inter_chroma(int w, int h, size_t sstride, const uint8_t *src
 			i16x8 x0 = maddABCD(ziplo64(l0, l1), l1, shuf, AB, CD);
 			i8x16 p = shrrpu16(x0, (i16x8){}, 6);
 			i16x8 q = {*(int16_t *)DADDR(dst,  0), *(int16_t *)DADDR(dst,  1), *(int16_t *)DADDR(dst,  2), *(int16_t *)DADDR(dst,  3)};
-			i16x8 v = maddshrC4(q, p, w0, w1, o, wd);
+			i16x8 v = blendC4(kind, q, p, w0, w1, o, wd);
 			*(int16_t *)DADDR(dst,  0) = v[0];
 			*(int16_t *)DADDR(dst,  1) = v[1];
 			*(int16_t *)DADDR(dst,  2) = v[2];
@@ -1252,6 +1266,11 @@ static void noinline decode_inter(Edge264Context *ctx, int i, int w, int h) {
 		}
 	}
 	
+	i16x8 no_weight = {pack_w(0, 1), 0, 0, 0, pack_w(0, 1), pack_w(0, 1), 0, 0};
+	i16x8 default2 = {257, 1, 1, 1, 257, 257, 1, 1};
+	int kind = !movemask((i8x16)(wod != no_weight)) ? BLEND_COPY :
+		!movemask((i8x16)(wod != default2)) ? BLEND_AVG : BLEND_WEIGHTED;
+	
 	// edge propagation is an annoying but beautiful piece of code
 	int xWide = (x & 7) != 0;
 	int yWide = (y & 7) != 0;
@@ -1296,12 +1315,12 @@ static void noinline decode_inter(Edge264Context *ctx, int i, int w, int h) {
 	int xFrac_C = x & 7;
 	int yFrac_C = y & 7;
 	i32x4 ABCD = {little_endian32(((8 - xFrac_C) | xFrac_C << 8) * ((8 - yFrac_C) | yFrac_C << 16))};
-	decode_inter_chroma(w, h, sstride_C, src_C, dstride_C, dst_C, ABCD, wod);
+	decode_inter_chroma(kind, w, h, sstride_C, src_C, dstride_C, dst_C, ABCD, wod);
 	
 	// tail jump to luma prediction
 	int xFrac_Y = x & 3;
 	int yFrac_Y = y & 3;
 	size_t dstride_Y = ctx->t.stride[0];
 	uint8_t *dst_Y = ctx->samples_mb[0] + y444[i4x4] * dstride_Y + x444[i4x4];
-	decode_inter_luma((w << 1 & 48) + yFrac_Y * 4 + xFrac_Y, h, sstride_Y, src_Y, dstride_Y, dst_Y, wod);
+	decode_inter_luma((w << 1 & 48) + yFrac_Y * 4 + xFrac_Y, kind, h, sstride_Y, src_Y, dstride_Y, dst_Y, wod);
 }
