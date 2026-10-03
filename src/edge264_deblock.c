@@ -1116,6 +1116,14 @@ static noinline void deblock_mb(Edge264Context *ctx)
 		ctx->tC0_v[1] = ifelse_mask(bS2efgh, shuffle(tC02, shuf1), bS0efgh | shuffle(tC01, shuf1));
 		ctx->tC0_v[2] = ifelse_mask(bS2aacc, shuffle(tC02, shuf2), bS0aacc | shuffle(tC01, shuf2));
 		ctx->tC0_v[3] = ifelse_mask(bS2eegg, shuffle(tC02, shuf3), bS0eegg | shuffle(tC01, shuf3));
+		
+		// skip the loads, transposes and stores when no edge is filtered at all,
+		// as between motion-compensated macroblocks without residuals
+		i8x16 tC0 = ctx->tC0_v[0] & ctx->tC0_v[1] & ctx->tC0_v[2] & ctx->tC0_v[3];
+		if ((mbA->mbIsInterFlag & mbB->mbIsInterFlag) && movemask(tC0 == set8(-1)) == 0xffff) {
+			mb->filter_edges = 0; // prevent redundant deblocking with deblock_idc==2 and ASO
+			return;
+		}
 	}
 	
 	// jump to luma deblocking filter
