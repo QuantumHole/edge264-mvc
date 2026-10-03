@@ -79,6 +79,10 @@
  */
 
 #include "edge264_internal.h"
+#if defined(__linux__)
+	#include <sys/mman.h>
+	#define HUGE_PAGE_SIZE ((size_t)2 << 20)
+#endif
 
 #include "edge264_headers.c"
 
@@ -134,7 +138,21 @@ const uint8_t *edge264_find_start_code(const uint8_t *buf, const uint8_t *end, i
 
 
 static void internal_alloc(void **samples, unsigned samples_size, void **mbs, unsigned mbs_size, int errno_on_fail, void *alloc_arg) {
-	*samples = aligned_malloc(16, samples_size + mbs_size);
+	size_t size = (size_t)samples_size + mbs_size;
+	#if defined(__linux__) && defined(MADV_HUGEPAGE)
+		// reason: motion compensation reads up to 21 rows of a reference picture
+		// for each block, each row on another 4 KB page, across all the pictures
+		// being decoded at once, so the TLB misses cost a few percent. Ask for
+		// transparent huge pages (2 MB) for pictures large enough to fill one;
+		// aligned_alloc needs the size to be a multiple of the alignment.
+		if (size >= HUGE_PAGE_SIZE) {
+			size = (size + HUGE_PAGE_SIZE - 1) & ~(size_t)(HUGE_PAGE_SIZE - 1);
+			*samples = aligned_alloc(HUGE_PAGE_SIZE, size);
+			if (*samples)
+				madvise(*samples, size, MADV_HUGEPAGE);
+		} else
+	#endif
+	*samples = aligned_malloc(16, size);
 	// reason: guard the failed allocation - `NULL + samples_size` is undefined
 	// pointer arithmetic (6.5.6). The caller (alloc_frame) already treats a NULL
 	// samples pointer as failure, so returning NULL for *mbs keeps that contract.
