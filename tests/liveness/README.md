@@ -212,3 +212,11 @@ multithreaded (`EDGE264_THREADS=8` and `-1`), where these deadlocks surface.
   the emitted pixels independent of the DPB slot the picture got (the undecoded
   part used to show whatever the slot held), so single- and multithreaded
   decoding agree.
+
+- self_reference.264: a copy of `tests/asan/reflist_oob.264` (a leading B slice
+  with no reference picture), run under the liveness harness and with threads.
+  The out-of-range `RefPicList` fix-up replaced the missing references with slot
+  0, which is the current picture: single-threaded the slice read its own
+  undecoded samples, multithreaded its task waited forever on its own decoding
+  progress. `parse_ref_pic_list_modification` now never substitutes (nor keeps)
+  the current picture, and rejects a slice that has no other picture to refer to.

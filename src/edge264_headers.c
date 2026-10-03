@@ -1031,7 +1031,7 @@ static void parse_pred_weight_table(Edge264Decoder *dec, Edge264SeqParameterSet 
  * single function to foster compactness and maintenance. Performance is not
  * crucial here.
  */
-static void parse_ref_pic_list_modification(Edge264Decoder *dec, Edge264SeqParameterSet *sps, Edge264Task *t)
+static int parse_ref_pic_list_modification(Edge264Decoder *dec, Edge264SeqParameterSet *sps, Edge264Task *t)
 {
 	// initial sort on FrameNum for P, on PicOrderCnt for B
 	int count[3] = {0, 0, 0}; // number of refs before/after/long
@@ -1169,10 +1169,21 @@ static void parse_ref_pic_list_modification(Edge264Decoder *dec, Edge264SeqParam
 	// MapPicToList0, ...) out of bounds. Replace every out-of-range referenced
 	// entry with an in-range slot. Inert for conformant streams (all referenced
 	// entries are valid); matches ffmpeg, which does not crash on these.
+	// The current picture is never a valid replacement (nor a valid entry): a
+	// picture predicting from itself reads its own undecoded samples single-
+	// threaded, and waits forever on its own progress multithreaded. Without
+	// any other picture to refer to (e.g. a P slice in an IDR picture), reject
+	// the slice as corrupt.
 	for (int l = 0; l <= t->slice_type; l++) {
-		int valid = (size > 0 && (unsigned)t->RefPicList[l][0] < 32) ? t->RefPicList[l][0] : 0;
+		int valid = -1;
+		for (int i = 0; i < t->pps.num_ref_idx_active[l] && valid < 0; i++) {
+			if ((unsigned)t->RefPicList[l][i] < 32 && t->RefPicList[l][i] != dec->currPic)
+				valid = t->RefPicList[l][i];
+		}
+		if (valid < 0)
+			return EBADMSG;
 		for (int i = 0; i < t->pps.num_ref_idx_active[l]; i++) {
-			if ((unsigned)t->RefPicList[l][i] >= 32)
+			if ((unsigned)t->RefPicList[l][i] >= 32 || t->RefPicList[l][i] == dec->currPic)
 				t->RefPicList[l][i] = valid;
 		}
 	}
@@ -1187,6 +1198,7 @@ static void parse_ref_pic_list_modification(Edge264Decoder *dec, Edge264SeqParam
 		}
 		log_dec(dec, "]]\n");
 	#endif
+	return 0;
 }
 
 
@@ -1797,7 +1809,8 @@ int ADD_VARIANT(parse_slice_layer_without_partitioning)(Edge264Decoder *dec, Edg
 		log_dec(dec, t->slice_type ? ", l0: %u, l1: %u}\n" : ", l0: %u}\n",
 			t->pps.num_ref_idx_active[0], t->pps.num_ref_idx_active[1]);
 		
-		parse_ref_pic_list_modification(dec, sps, t);
+		if (parse_ref_pic_list_modification(dec, sps, t))
+			return print_dec(dec, "  decode_NAL_result: %s\n", EBADMSG);
 		parse_pred_weight_table(dec, sps, t);
 	}
 	

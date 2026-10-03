@@ -178,3 +178,10 @@ incomplete_ref_dependency_eos 2
 # correct decoder conceals the incomplete picture at the flush and emits all 9
 # frames, the same single- and multithreaded. Regression => stall.
 mvc_truncated_dependent 9
+# self_reference: tests/asan/reflist_oob.264 under the liveness harness. Its
+# leading B slice has no reference picture, and the out-of-range RefPicList
+# fix-up used to substitute slot 0 - the current picture itself. Single-threaded
+# that read its own undecoded samples; multithreaded the task waited forever on
+# its own progress (no frame, then a stall). A correct decoder rejects the slice
+# (no frame) and terminates. Regression => stall.
+self_reference 0
