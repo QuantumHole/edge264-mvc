@@ -565,6 +565,35 @@ static void recover_slice(Edge264Context *ctx, int currPic) {
 
 
 /**
+ * Deblock the macroblocks [from, to) of frame currPic in raster order.
+ */
+static void deblock_range(Edge264Context *c, int currPic, int from, int to) {
+	if ((unsigned)from >= (unsigned)to)
+		return;
+	c->mby = (unsigned)from / (unsigned)c->t.pic_width_in_mbs;
+	c->mbx = (unsigned)from % (unsigned)c->t.pic_width_in_mbs;
+	c->samples_mb[0] = c->t.samples_buffers[currPic] + (c->mbx + c->mby * c->t.stride[0]) * 16;
+	c->samples_mb[1] = c->t.samples_buffers[currPic] + (c->mbx + c->mby * c->t.stride[1]) * 8 + c->t.plane_size_Y;
+	c->samples_mb[2] = c->samples_mb[1] + (c->t.stride[1] >> 1);
+	c->_mb = (Edge264Macroblock *)c->t.mb_buffer + c->mbx + c->mby * (c->t.pic_width_in_mbs + 1);
+	for (int addr = from; addr < to; addr++) {
+		deblock_mb(c);
+		c->_mb++;
+		c->mbx++;
+		c->samples_mb[0] += 16;
+		c->samples_mb[1] += 8;
+		c->samples_mb[2] += 8;
+		if (c->mbx >= c->t.pic_width_in_mbs) {
+			c->_mb++;
+			c->mbx = 0;
+			c->samples_mb[0] += c->t.stride[0] * 16 - c->t.pic_width_in_mbs * 16;
+			c->samples_mb[1] += c->t.stride[1] * 8 - c->t.pic_width_in_mbs * 8;
+			c->samples_mb[2] += c->t.stride[1] * 8 - c->t.pic_width_in_mbs * 8;
+		}
+	}
+}
+
+/**
  * This function is the entry point for worker threads, where they consume
  * tasks continuously until stopped by the parent process.
  */
@@ -632,31 +661,8 @@ void *ADD_VARIANT(worker_loop)(void *arg) {
 			c.t.unref_cb((int)ret, c.t.unref_arg);
 		
 		// deblock the rest of mbs in this slice
-		if (c.t.next_deblock_addr >= 0) {
-			c.t.next_deblock_addr = max(c.t.next_deblock_addr, c.t.first_mb_in_slice);
-			c.mby = (unsigned)c.t.next_deblock_addr / (unsigned)c.t.pic_width_in_mbs;
-			c.mbx = (unsigned)c.t.next_deblock_addr % (unsigned)c.t.pic_width_in_mbs;
-			c.samples_mb[0] = c.t.samples_buffers[currPic] + (c.mbx + c.mby * c.t.stride[0]) * 16;
-			c.samples_mb[1] = c.t.samples_buffers[currPic] + (c.mbx + c.mby * c.t.stride[1]) * 8 + c.t.plane_size_Y;
-			c.samples_mb[2] = c.samples_mb[1] + (c.t.stride[1] >> 1);
-			c._mb = (Edge264Macroblock *)c.t.mb_buffer + c.mbx + c.mby * (c.t.pic_width_in_mbs + 1);
-			while (c.t.next_deblock_addr < c.CurrMbAddr) {
-				deblock_mb(&c);
-				c.t.next_deblock_addr++;
-				c._mb++;
-				c.mbx++;
-				c.samples_mb[0] += 16;
-				c.samples_mb[1] += 8;
-				c.samples_mb[2] += 8;
-				if (c.mbx >= c.t.pic_width_in_mbs) {
-					c._mb++;
-					c.mbx = 0;
-					c.samples_mb[0] += c.t.stride[0] * 16 - c.t.pic_width_in_mbs * 16;
-					c.samples_mb[1] += c.t.stride[1] * 8 - c.t.pic_width_in_mbs * 8;
-					c.samples_mb[2] += c.t.stride[1] * 8 - c.t.pic_width_in_mbs * 8;
-				}
-			}
-		}
+		if (c.t.next_deblock_addr >= 0)
+			deblock_range(&c, currPic, max(c.t.next_deblock_addr, (int)c.t.first_mb_in_slice), c.CurrMbAddr);
 		
 		// on error, recover mbs and signal them as erroneous (allows overwrite by redundant slices)
 		if (__builtin_expect(ret != 0, 0))
@@ -673,32 +679,8 @@ void *ADD_VARIANT(worker_loop)(void *arg) {
 		// deblock the rest of the frame if all mbs have been decoded correctly
 		int remaining_mbs = ret ?: __atomic_sub_fetch(&c.d->remaining_mbs[currPic], c.CurrMbAddr - c.t.first_mb_in_slice, __ATOMIC_ACQ_REL);
 		if (remaining_mbs == 0) {
-			c.t.next_deblock_addr = __atomic_load_n(&c.d->next_deblock_addr[currPic], __ATOMIC_ACQUIRE);
-			c.CurrMbAddr = c.t.pic_width_in_mbs * c.t.pic_height_in_mbs;
-			if ((unsigned)c.t.next_deblock_addr < c.CurrMbAddr) {
-				c.mby = (unsigned)c.t.next_deblock_addr / (unsigned)c.t.pic_width_in_mbs;
-				c.mbx = (unsigned)c.t.next_deblock_addr % (unsigned)c.t.pic_width_in_mbs;
-				c.samples_mb[0] = c.t.samples_buffers[currPic] + (c.mbx + c.mby * c.t.stride[0]) * 16;
-				c.samples_mb[1] = c.t.samples_buffers[currPic] + (c.mbx + c.mby * c.t.stride[1]) * 8 + c.t.plane_size_Y;
-				c.samples_mb[2] = c.samples_mb[1] + (c.t.stride[1] >> 1);
-				c._mb = (Edge264Macroblock *)c.t.mb_buffer + c.mbx + c.mby * (c.t.pic_width_in_mbs + 1);
-				while (c.t.next_deblock_addr < c.CurrMbAddr) {
-					deblock_mb(&c);
-					c.t.next_deblock_addr++;
-					c._mb++;
-					c.mbx++;
-					c.samples_mb[0] += 16;
-					c.samples_mb[1] += 8;
-					c.samples_mb[2] += 8;
-					if (c.mbx >= c.t.pic_width_in_mbs) {
-						c._mb++;
-						c.mbx = 0;
-						c.samples_mb[0] += c.t.stride[0] * 16 - c.t.pic_width_in_mbs * 16;
-						c.samples_mb[1] += c.t.stride[1] * 8 - c.t.pic_width_in_mbs * 8;
-						c.samples_mb[2] += c.t.stride[1] * 8 - c.t.pic_width_in_mbs * 8;
-					}
-				}
-			}
+			int total_mbs = c.t.pic_width_in_mbs * c.t.pic_height_in_mbs;
+			deblock_range(&c, currPic, __atomic_load_n(&c.d->next_deblock_addr[currPic], __ATOMIC_ACQUIRE), total_mbs);
 			__atomic_store_n(&c.d->next_deblock_addr[currPic], INT_MAX, __ATOMIC_RELEASE); // signals the frame is complete
 		}
 		
