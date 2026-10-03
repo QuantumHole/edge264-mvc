@@ -111,3 +111,12 @@ guard against sanitizer aborts and CPU-burn.
   array subscript outside mvs_s[32] (undefined behaviour, reported by
   UndefinedBehaviorSanitizer); it now indexes a pointer formed from the
   macroblock address, which is what the offsets are relative to.
+- mvc_format_change_unpaired.264: a fuzzer-found MVC stream whose base view
+  changes format through a new SPS while its last base pictures have no
+  dependent view. The format change outputs every picture of the previous
+  sequence (bump_all_frames) and returns ENOBUFS until they are taken, but
+  get_frame held those bases waiting for their dependent views, since only an
+  end_of_seq or the end-of-stream drain let it emit an unpairable base - so
+  the SPS returned ENOBUFS without any frame to drain, forever. The format
+  change now sets the same flushing valve as an end_of_seq. The harness
+  reports the stall.

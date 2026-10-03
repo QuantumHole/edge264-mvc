@@ -2791,6 +2791,11 @@ int ADD_VARIANT(parse_seq_parameter_set)(Edge264Decoder *dec, Edge264UnrefCb unr
 		
 		// bump all frames and clear the decoder if the frame format changes
 		if (memcmp(&format, &dec->out, sizeof(Edge264Frame))) {
+			// The previous sequence ends here like at an end_of_seq: every picture
+			// must be output, so let get_frame emit an MVC base whose dependent view
+			// never comes (otherwise it holds the base, and this NAL returned ENOBUFS
+			// until the caller drained the whole stream). The next NAL clears the flag.
+			dec->flushing = 1;
 			if (bump_all_frames(dec))
 				return ENOBUFS; // SPS should be reparsed after clearing frames, so we don't print it yet
 			clear_decoder(dec);
