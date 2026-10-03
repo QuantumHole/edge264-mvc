@@ -79,7 +79,6 @@ static noinline void decode_P_skip(Edge264Context *ctx) {
 	}
 	i16x8 mvs = broadcast32(mv, 0);
 	mb->mvs_v[0] = mb->mvs_v[1] = mb->mvs_v[2] = mb->mvs_v[3] = mvs;
-	mb->mvs_v[4] = mb->mvs_v[5] = mb->mvs_v[6] = mb->mvs_v[7] = (i16x8){};
 	decode_inter(ctx, 0, 16, 16);
 }
 

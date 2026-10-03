@@ -989,100 +989,107 @@ static noinline void deblock_mb(Edge264Context *ctx)
 			i8x16 refsaceg = ziplo8(neq, neq);
 			bS0aceg = (refsaceg | mvsaceg) == zero;
 			bS0bdfh = mvsbdfh == zero;
-		} else if (mb->f.inter_eqs_s == little_endian32(0x1b5fbbff)) { // 16x16 B macroblock
-			i16x8 mvsv0l0 = unziphi32(mbA->mvs_v[1], mbA->mvs_v[3]);
-			i16x8 mvsv1l0 = unziplo32(mb->mvs_v[0], mb->mvs_v[2]);
-			i16x8 mvsv0l1 = unziphi32(mbA->mvs_v[5], mbA->mvs_v[7]);
-			i16x8 mvsv1l1 = unziplo32(mb->mvs_v[4], mb->mvs_v[6]);
-			i16x8 mvsh0l0 = ziphi64(mbB->mvs_v[2], mbB->mvs_v[3]);
-			i16x8 mvsh1l0 = ziplo64(mb->mvs_v[0], mb->mvs_v[1]);
-			i16x8 mvsh0l1 = ziphi64(mbB->mvs_v[6], mbB->mvs_v[7]);
-			i16x8 mvsh1l1 = ziplo64(mb->mvs_v[4], mb->mvs_v[5]);
-			i8x16 mvsael00 = packabd16(mvsv0l0, mvsv1l0, mvsh0l0, mvsh1l0);
-			i8x16 mvsael01 = packabd16(mvsv0l0, mvsv1l1, mvsh0l0, mvsh1l1);
-			i8x16 mvsael10 = packabd16(mvsv0l1, mvsv1l0, mvsh0l1, mvsh1l0);
-			i8x16 mvsael11 = packabd16(mvsv0l1, mvsv1l1, mvsh0l1, mvsh1l1);
-			i8x16 mvsaep = subsu8(maxu8(mvsael00, mvsael11), c3);
-			i8x16 mvsaec = subsu8(maxu8(mvsael01, mvsael10), c3);
-			i8x16 mvsacegp = ziplo32(packs16(mvsaep, zero), zero);
-			i8x16 mvsacegc = ziplo32(packs16(mvsaec, zero), zero);
-			i64x2 refPic = {mb->refPic_l};
-			i64x2 refPicAB = {mbA->refPic_l, mbB->refPic_l};
-			i8x16 refs0 = shuffle(unziplo32(refPic, refPicAB), shufVHAB); // (v0,h0,A0,B0)
-			i8x16 refs1 = shuffle(unziphi32(refPic, refPicAB), shufVHAB); // (v1,h1,A1,B1)
-			i8x16 neq0 = refs0 ^ (i8x16)shrd128(refs1, refs0, 8); // (v0^A1,h0^B1,A0^v0,B0^h0)
-			i8x16 neq1 = refs1 ^ (i8x16)shrd128(refs0, refs1, 8); // (v1^A0,h1^B0,A1^v1,B1^h1)
-			i8x16 refsaceg = neq0 | neq1; // low=cross, high=parallel
-			i8x16 refsacegc = ziplo8(refsaceg, refsaceg);
-			i8x16 refsacegp = ziphi8(refsaceg, refsaceg);
-			i8x16 neq3 = minu8(refsacegp, refsacegc) | minu8(mvsacegp, mvsacegc);
-			i8x16 neq4 = minu8(refsacegp, mvsacegc) | minu8(mvsacegp, refsacegc);
-			bS0aceg = (neq3 | neq4) == zero;
-			bS0bdfh = set8(-1);
-		} else { // B macroblocks
-			i16x8 mvsv0l0 = unziphi32(mbA->mvs_v[1], mbA->mvs_v[3]);
-			i16x8 mvsv1l0 = unziplo32(mb->mvs_v[0], mb->mvs_v[2]);
-			i16x8 mvsv2l0 = unziphi32(mb->mvs_v[0], mb->mvs_v[2]);
-			i16x8 mvsv3l0 = unziplo32(mb->mvs_v[1], mb->mvs_v[3]);
-			i16x8 mvsv4l0 = unziphi32(mb->mvs_v[1], mb->mvs_v[3]);
-			i16x8 mvsv0l1 = unziphi32(mbA->mvs_v[5], mbA->mvs_v[7]);
-			i16x8 mvsv1l1 = unziplo32(mb->mvs_v[4], mb->mvs_v[6]);
-			i16x8 mvsv2l1 = unziphi32(mb->mvs_v[4], mb->mvs_v[6]);
-			i16x8 mvsv3l1 = unziplo32(mb->mvs_v[5], mb->mvs_v[7]);
-			i16x8 mvsv4l1 = unziphi32(mb->mvs_v[5], mb->mvs_v[7]);
-			i8x16 mvsacl00 = packabd16(mvsv0l0, mvsv1l0, mvsv2l0, mvsv3l0);
-			i8x16 mvsbdl00 = packabd16(mvsv1l0, mvsv2l0, mvsv3l0, mvsv4l0);
-			i8x16 mvsacl01 = packabd16(mvsv0l0, mvsv1l1, mvsv2l0, mvsv3l1);
-			i8x16 mvsbdl01 = packabd16(mvsv1l0, mvsv2l1, mvsv3l0, mvsv4l1);
-			i8x16 mvsacl10 = packabd16(mvsv0l1, mvsv1l0, mvsv2l1, mvsv3l0);
-			i8x16 mvsbdl10 = packabd16(mvsv1l1, mvsv2l0, mvsv3l1, mvsv4l0);
-			i8x16 mvsacl11 = packabd16(mvsv0l1, mvsv1l1, mvsv2l1, mvsv3l1);
-			i8x16 mvsbdl11 = packabd16(mvsv1l1, mvsv2l1, mvsv3l1, mvsv4l1);
-			i8x16 mvsacp = subsu8(maxu8(mvsacl00, mvsacl11), c3);
-			i8x16 mvsbdp = subsu8(maxu8(mvsbdl00, mvsbdl11), c3);
-			i8x16 mvsacc = subsu8(maxu8(mvsacl01, mvsacl10), c3);
-			i8x16 mvsbdc = subsu8(maxu8(mvsbdl01, mvsbdl10), c3);
-			i16x8 mvsh0l0 = ziphi64(mbB->mvs_v[2], mbB->mvs_v[3]);
-			i16x8 mvsh1l0 = ziplo64(mb->mvs_v[0], mb->mvs_v[1]);
-			i16x8 mvsh2l0 = ziphi64(mb->mvs_v[0], mb->mvs_v[1]);
-			i16x8 mvsh3l0 = ziplo64(mb->mvs_v[2], mb->mvs_v[3]);
-			i16x8 mvsh4l0 = ziphi64(mb->mvs_v[2], mb->mvs_v[3]);
-			i16x8 mvsh0l1 = ziphi64(mbB->mvs_v[6], mbB->mvs_v[7]);
-			i16x8 mvsh1l1 = ziplo64(mb->mvs_v[4], mb->mvs_v[5]);
-			i16x8 mvsh2l1 = ziphi64(mb->mvs_v[4], mb->mvs_v[5]);
-			i16x8 mvsh3l1 = ziplo64(mb->mvs_v[6], mb->mvs_v[7]);
-			i16x8 mvsh4l1 = ziphi64(mb->mvs_v[6], mb->mvs_v[7]);
-			i8x16 mvsegl00 = packabd16(mvsh0l0, mvsh1l0, mvsh2l0, mvsh3l0);
-			i8x16 mvsfhl00 = packabd16(mvsh1l0, mvsh2l0, mvsh3l0, mvsh4l0);
-			i8x16 mvsegl01 = packabd16(mvsh0l0, mvsh1l1, mvsh2l0, mvsh3l1);
-			i8x16 mvsfhl01 = packabd16(mvsh1l0, mvsh2l1, mvsh3l0, mvsh4l1);
-			i8x16 mvsegl10 = packabd16(mvsh0l1, mvsh1l0, mvsh2l1, mvsh3l0);
-			i8x16 mvsfhl10 = packabd16(mvsh1l1, mvsh2l0, mvsh3l1, mvsh4l0);
-			i8x16 mvsegl11 = packabd16(mvsh0l1, mvsh1l1, mvsh2l1, mvsh3l1);
-			i8x16 mvsfhl11 = packabd16(mvsh1l1, mvsh2l1, mvsh3l1, mvsh4l1);
-			i8x16 mvsegp = subsu8(maxu8(mvsegl00, mvsegl11), c3);
-			i8x16 mvsfhp = subsu8(maxu8(mvsfhl00, mvsfhl11), c3);
-			i8x16 mvsegc = subsu8(maxu8(mvsegl01, mvsegl10), c3);
-			i8x16 mvsfhc = subsu8(maxu8(mvsfhl01, mvsfhl10), c3);
-			i8x16 mvsacegp = packs16(mvsacp, mvsegp);
-			i8x16 mvsbdfhp = packs16(mvsbdp, mvsfhp);
-			i8x16 mvsacegc = packs16(mvsacc, mvsegc);
-			i8x16 mvsbdfhc = packs16(mvsbdc, mvsfhc);
-			i64x2 refPic = {mb->refPic_l};
-			i64x2 refPicAB = {mbA->refPic_l, mbB->refPic_l};
-			i8x16 refs0 = shuffle(unziplo32(refPic, refPicAB), shufVHAB); // (v0,h0,A0,B0)
-			i8x16 refs1 = shuffle(unziphi32(refPic, refPicAB), shufVHAB); // (v1,h1,A1,B1)
-			i8x16 neq0 = refs0 ^ shrd128(refs1, refs0, 8); // (v0^A1,h0^B1,A0^v0,B0^h0)
-			i8x16 neq1 = refs1 ^ shrd128(refs0, refs1, 8); // (v1^A0,h1^B0,A1^v1,B1^h1)
-			i8x16 neq2 = refs0 ^ refs1;
-			i8x16 refsaceg = neq0 | neq1; // low=cross, high=parallel
-			i8x16 refsacegc = ziplo8(refsaceg, refsaceg);
-			i8x16 refsacegp = ziphi8(refsaceg, refsaceg);
-			i8x16 refsbdfhc = ziplo8(neq2, neq2);
-			i8x16 neq3 = minu8(refsacegp, refsacegc) | minu8(mvsacegp, mvsacegc);
-			i8x16 neq4 = minu8(refsacegp, mvsacegc) | minu8(mvsacegp, refsacegc);
-			bS0aceg = (neq3 | neq4) == zero;
-			bS0bdfh = minu8(mvsbdfhp, refsbdfhc | mvsbdfhc) == zero;
+		} else {
+			// P macroblocks of pictures mixing P and B slices leave their L1 motion
+			// vectors unwritten, so they are zeroed here when no L1 refIdx is set.
+			i16x8 l1 = set32(-(mb->refIdx_s[1] != -1));
+			i16x8 l1A = set32(-(mbA->refIdx_s[1] != -1));
+			i16x8 l1B = set32(-(mbB->refIdx_s[1] != -1));
+			if (mb->f.inter_eqs_s == little_endian32(0x1b5fbbff)) { // 16x16 B macroblock
+				i16x8 mvsv0l0 = unziphi32(mbA->mvs_v[1], mbA->mvs_v[3]);
+				i16x8 mvsv1l0 = unziplo32(mb->mvs_v[0], mb->mvs_v[2]);
+				i16x8 mvsv0l1 = unziphi32((mbA->mvs_v[5] & l1A), (mbA->mvs_v[7] & l1A));
+				i16x8 mvsv1l1 = unziplo32((mb->mvs_v[4] & l1), (mb->mvs_v[6] & l1));
+				i16x8 mvsh0l0 = ziphi64(mbB->mvs_v[2], mbB->mvs_v[3]);
+				i16x8 mvsh1l0 = ziplo64(mb->mvs_v[0], mb->mvs_v[1]);
+				i16x8 mvsh0l1 = ziphi64((mbB->mvs_v[6] & l1B), (mbB->mvs_v[7] & l1B));
+				i16x8 mvsh1l1 = ziplo64((mb->mvs_v[4] & l1), (mb->mvs_v[5] & l1));
+				i8x16 mvsael00 = packabd16(mvsv0l0, mvsv1l0, mvsh0l0, mvsh1l0);
+				i8x16 mvsael01 = packabd16(mvsv0l0, mvsv1l1, mvsh0l0, mvsh1l1);
+				i8x16 mvsael10 = packabd16(mvsv0l1, mvsv1l0, mvsh0l1, mvsh1l0);
+				i8x16 mvsael11 = packabd16(mvsv0l1, mvsv1l1, mvsh0l1, mvsh1l1);
+				i8x16 mvsaep = subsu8(maxu8(mvsael00, mvsael11), c3);
+				i8x16 mvsaec = subsu8(maxu8(mvsael01, mvsael10), c3);
+				i8x16 mvsacegp = ziplo32(packs16(mvsaep, zero), zero);
+				i8x16 mvsacegc = ziplo32(packs16(mvsaec, zero), zero);
+				i64x2 refPic = {mb->refPic_l};
+				i64x2 refPicAB = {mbA->refPic_l, mbB->refPic_l};
+				i8x16 refs0 = shuffle(unziplo32(refPic, refPicAB), shufVHAB); // (v0,h0,A0,B0)
+				i8x16 refs1 = shuffle(unziphi32(refPic, refPicAB), shufVHAB); // (v1,h1,A1,B1)
+				i8x16 neq0 = refs0 ^ (i8x16)shrd128(refs1, refs0, 8); // (v0^A1,h0^B1,A0^v0,B0^h0)
+				i8x16 neq1 = refs1 ^ (i8x16)shrd128(refs0, refs1, 8); // (v1^A0,h1^B0,A1^v1,B1^h1)
+				i8x16 refsaceg = neq0 | neq1; // low=cross, high=parallel
+				i8x16 refsacegc = ziplo8(refsaceg, refsaceg);
+				i8x16 refsacegp = ziphi8(refsaceg, refsaceg);
+				i8x16 neq3 = minu8(refsacegp, refsacegc) | minu8(mvsacegp, mvsacegc);
+				i8x16 neq4 = minu8(refsacegp, mvsacegc) | minu8(mvsacegp, refsacegc);
+				bS0aceg = (neq3 | neq4) == zero;
+				bS0bdfh = set8(-1);
+			} else { // B macroblocks
+				i16x8 mvsv0l0 = unziphi32(mbA->mvs_v[1], mbA->mvs_v[3]);
+				i16x8 mvsv1l0 = unziplo32(mb->mvs_v[0], mb->mvs_v[2]);
+				i16x8 mvsv2l0 = unziphi32(mb->mvs_v[0], mb->mvs_v[2]);
+				i16x8 mvsv3l0 = unziplo32(mb->mvs_v[1], mb->mvs_v[3]);
+				i16x8 mvsv4l0 = unziphi32(mb->mvs_v[1], mb->mvs_v[3]);
+				i16x8 mvsv0l1 = unziphi32((mbA->mvs_v[5] & l1A), (mbA->mvs_v[7] & l1A));
+				i16x8 mvsv1l1 = unziplo32((mb->mvs_v[4] & l1), (mb->mvs_v[6] & l1));
+				i16x8 mvsv2l1 = unziphi32((mb->mvs_v[4] & l1), (mb->mvs_v[6] & l1));
+				i16x8 mvsv3l1 = unziplo32((mb->mvs_v[5] & l1), (mb->mvs_v[7] & l1));
+				i16x8 mvsv4l1 = unziphi32((mb->mvs_v[5] & l1), (mb->mvs_v[7] & l1));
+				i8x16 mvsacl00 = packabd16(mvsv0l0, mvsv1l0, mvsv2l0, mvsv3l0);
+				i8x16 mvsbdl00 = packabd16(mvsv1l0, mvsv2l0, mvsv3l0, mvsv4l0);
+				i8x16 mvsacl01 = packabd16(mvsv0l0, mvsv1l1, mvsv2l0, mvsv3l1);
+				i8x16 mvsbdl01 = packabd16(mvsv1l0, mvsv2l1, mvsv3l0, mvsv4l1);
+				i8x16 mvsacl10 = packabd16(mvsv0l1, mvsv1l0, mvsv2l1, mvsv3l0);
+				i8x16 mvsbdl10 = packabd16(mvsv1l1, mvsv2l0, mvsv3l1, mvsv4l0);
+				i8x16 mvsacl11 = packabd16(mvsv0l1, mvsv1l1, mvsv2l1, mvsv3l1);
+				i8x16 mvsbdl11 = packabd16(mvsv1l1, mvsv2l1, mvsv3l1, mvsv4l1);
+				i8x16 mvsacp = subsu8(maxu8(mvsacl00, mvsacl11), c3);
+				i8x16 mvsbdp = subsu8(maxu8(mvsbdl00, mvsbdl11), c3);
+				i8x16 mvsacc = subsu8(maxu8(mvsacl01, mvsacl10), c3);
+				i8x16 mvsbdc = subsu8(maxu8(mvsbdl01, mvsbdl10), c3);
+				i16x8 mvsh0l0 = ziphi64(mbB->mvs_v[2], mbB->mvs_v[3]);
+				i16x8 mvsh1l0 = ziplo64(mb->mvs_v[0], mb->mvs_v[1]);
+				i16x8 mvsh2l0 = ziphi64(mb->mvs_v[0], mb->mvs_v[1]);
+				i16x8 mvsh3l0 = ziplo64(mb->mvs_v[2], mb->mvs_v[3]);
+				i16x8 mvsh4l0 = ziphi64(mb->mvs_v[2], mb->mvs_v[3]);
+				i16x8 mvsh0l1 = ziphi64((mbB->mvs_v[6] & l1B), (mbB->mvs_v[7] & l1B));
+				i16x8 mvsh1l1 = ziplo64((mb->mvs_v[4] & l1), (mb->mvs_v[5] & l1));
+				i16x8 mvsh2l1 = ziphi64((mb->mvs_v[4] & l1), (mb->mvs_v[5] & l1));
+				i16x8 mvsh3l1 = ziplo64((mb->mvs_v[6] & l1), (mb->mvs_v[7] & l1));
+				i16x8 mvsh4l1 = ziphi64((mb->mvs_v[6] & l1), (mb->mvs_v[7] & l1));
+				i8x16 mvsegl00 = packabd16(mvsh0l0, mvsh1l0, mvsh2l0, mvsh3l0);
+				i8x16 mvsfhl00 = packabd16(mvsh1l0, mvsh2l0, mvsh3l0, mvsh4l0);
+				i8x16 mvsegl01 = packabd16(mvsh0l0, mvsh1l1, mvsh2l0, mvsh3l1);
+				i8x16 mvsfhl01 = packabd16(mvsh1l0, mvsh2l1, mvsh3l0, mvsh4l1);
+				i8x16 mvsegl10 = packabd16(mvsh0l1, mvsh1l0, mvsh2l1, mvsh3l0);
+				i8x16 mvsfhl10 = packabd16(mvsh1l1, mvsh2l0, mvsh3l1, mvsh4l0);
+				i8x16 mvsegl11 = packabd16(mvsh0l1, mvsh1l1, mvsh2l1, mvsh3l1);
+				i8x16 mvsfhl11 = packabd16(mvsh1l1, mvsh2l1, mvsh3l1, mvsh4l1);
+				i8x16 mvsegp = subsu8(maxu8(mvsegl00, mvsegl11), c3);
+				i8x16 mvsfhp = subsu8(maxu8(mvsfhl00, mvsfhl11), c3);
+				i8x16 mvsegc = subsu8(maxu8(mvsegl01, mvsegl10), c3);
+				i8x16 mvsfhc = subsu8(maxu8(mvsfhl01, mvsfhl10), c3);
+				i8x16 mvsacegp = packs16(mvsacp, mvsegp);
+				i8x16 mvsbdfhp = packs16(mvsbdp, mvsfhp);
+				i8x16 mvsacegc = packs16(mvsacc, mvsegc);
+				i8x16 mvsbdfhc = packs16(mvsbdc, mvsfhc);
+				i64x2 refPic = {mb->refPic_l};
+				i64x2 refPicAB = {mbA->refPic_l, mbB->refPic_l};
+				i8x16 refs0 = shuffle(unziplo32(refPic, refPicAB), shufVHAB); // (v0,h0,A0,B0)
+				i8x16 refs1 = shuffle(unziphi32(refPic, refPicAB), shufVHAB); // (v1,h1,A1,B1)
+				i8x16 neq0 = refs0 ^ shrd128(refs1, refs0, 8); // (v0^A1,h0^B1,A0^v0,B0^h0)
+				i8x16 neq1 = refs1 ^ shrd128(refs0, refs1, 8); // (v1^A0,h1^B0,A1^v1,B1^h1)
+				i8x16 neq2 = refs0 ^ refs1;
+				i8x16 refsaceg = neq0 | neq1; // low=cross, high=parallel
+				i8x16 refsacegc = ziplo8(refsaceg, refsaceg);
+				i8x16 refsacegp = ziphi8(refsaceg, refsaceg);
+				i8x16 refsbdfhc = ziplo8(neq2, neq2);
+				i8x16 neq3 = minu8(refsacegp, refsacegc) | minu8(mvsacegp, mvsacegc);
+				i8x16 neq4 = minu8(refsacegp, mvsacegc) | minu8(mvsacegp, refsacegc);
+				bS0aceg = (neq3 | neq4) == zero;
+				bS0bdfh = minu8(mvsbdfhp, refsbdfhc | mvsbdfhc) == zero;
+			}
 		}
 		i8x16 bS0abcd = ziplo32(bS0aceg, bS0bdfh);
 		i8x16 bS0efgh = ziphi32(bS0aceg, bS0bdfh);

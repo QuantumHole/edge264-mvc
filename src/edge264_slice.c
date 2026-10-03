@@ -1608,7 +1608,6 @@ static void CAFUNC(parse_P_mb)
 		log_mb(ctx, "%smb_type: %u\n", ctx->log_indent, mb_type);
 		if (mb_type > 4)
 			CAJUMP(parse_I_mb, mb_type - 5);
-		mb->mvs_v[4] = mb->mvs_v[5] = mb->mvs_v[6] = mb->mvs_v[7] = (i16x8){};
 		if (mb_type > 2)
 			CAJUMP(parse_P_sub_mb, (mb_type + 12) & 15); // 3->15, 4->0
 		CACALL(parse_ref_idx, 0x351 >> (mb_type << 2) & 15); // 0->1, 1->5, 2->3
@@ -1619,7 +1618,6 @@ static void CAFUNC(parse_P_mb)
 		int mb_type = get_ae(ctx, 15); // actually 1 and 3 are swapped
 		mb_type += mb_type + get_ae(ctx, 16 + mb_type);
 		log_mb(ctx, "%smb_type: %u\n", ctx->log_indent, (4 - mb_type) & 3);
-		mb->mvs_v[4] = mb->mvs_v[5] = mb->mvs_v[6] = mb->mvs_v[7] = (i16x8){};
 		if (mb_type == 1)
 			CAJUMP(parse_P_sub_mb, 15);
 		CACALL(parse_ref_idx, (mb_type + 1) | 1); // 0->1, 2->3, 3->5
