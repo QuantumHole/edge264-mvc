@@ -68,3 +68,11 @@ guard against sanitizer aborts and CPU-burn.
   first_mb_in_slice. The fix rejects the slice with EBADMSG before any macroblock
   is touched; ffmpeg likewise drops it. ASAN catches the overflow if the check is
   removed.
+- mc_narrow_picture.264: a fuzzer-found stream whose pictures are one
+  macroblock (16 pixels) wide, with a motion vector pointing left of the
+  picture. decode_inter tested the reference block against the picture bounds
+  with an unsigned comparison whose right bound, `width - block - filter taps`,
+  goes negative on a picture narrower than a block plus the 6-tap filter, so it
+  wrapped, the edge propagation was skipped and the luma filter read up to 13
+  bytes before the reference picture (heap-buffer-overflow). The bounds are now
+  compared signed.

@@ -1289,9 +1289,12 @@ static void noinline decode_inter(Edge264Context *ctx, int i, int w, int h) {
 	// edge propagation is an annoying but beautiful piece of code
 	int xWide = (x & 7) != 0;
 	int yWide = (y & 7) != 0;
+	// reason: compared signed, since the right bound goes negative on pictures
+	// narrower than a block plus the filter taps (16 pixels wide), where an
+	// unsigned comparison wrapped and skipped the edge propagation
 	int width_Y = ctx->t.pic_width_in_mbs * 16;
-	if (__builtin_expect((unsigned)xInt_Y - xWide * 2 >= width_Y - w + 1 - xWide * 5 ||
-		(unsigned)yInt_Y - yWide * 2 >= ctx->t.pic_height_in_mbs * 16 - h + 1 - yWide * 5, 0))
+	if (__builtin_expect(xInt_Y - xWide * 2 < 0 || xInt_Y + w + xWide * 3 > width_Y ||
+		yInt_Y - yWide * 2 < 0 || yInt_Y + h + yWide * 3 > ctx->t.pic_height_in_mbs * 16, 0))
 	{
 		i8x16 shuf0 = loadu128(shift_Y_8bit + 15 + clip3(-15, 0, xInt_Y - 2) + clip3(0, 15, xInt_Y + 14 - width_Y));
 		i8x16 shuf1 = loadu128(shift_Y_8bit + 15 + clip3(-15, 0, xInt_Y + 14) + clip3(0, 15, xInt_Y + 30 - width_Y));
