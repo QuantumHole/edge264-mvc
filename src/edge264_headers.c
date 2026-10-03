@@ -1133,18 +1133,25 @@ static int parse_ref_pic_list_modification(Edge264Decoder *dec, Edge264SeqParame
 				if (modification_of_pic_nums_idc < 2) {
 					picNumLX = (modification_of_pic_nums_idc == 0) ? picNumLX - (num + 1) : picNumLX + (num + 1);
 					unsigned MaskFrameNum = (1 << sps->log2_max_frame_num) - 1;
-					// iterate on short-term and non-existing frames
+					// iterate on short-term and non-existing frames, leaving -1 when
+					// the picture is missing (a damaged stream), which the fix-up
+					// below replaces - rather than the last frame iterated, which
+					// depended on the DPB slot allocation and thus on threading
+					pic = -1;
 					for (unsigned r = dec->short_term_frames; r; r &= r - 1) {
-						pic = __builtin_ctz(r);
-						if (!((dec->FrameNums[pic] ^ picNumLX) & MaskFrameNum))
+						if (!((dec->FrameNums[__builtin_ctz(r)] ^ picNumLX) & MaskFrameNum)) {
+							pic = __builtin_ctz(r);
 							break;
+						}
 					}
 				} else if (modification_of_pic_nums_idc == 2) {
 					// iterate on long-term frames only
+					pic = -1;
 					for (unsigned r = dec->long_term_frames & ~dec->short_term_frames; r; r &= r - 1) {
-						pic = __builtin_ctz(r);
-						if (dec->prev_LongTermFrameIdx[pic] == num)
+						if (dec->prev_LongTermFrameIdx[__builtin_ctz(r)] == num) {
+							pic = __builtin_ctz(r);
 							break;
+						}
 					}
 				}
 				int buf = pic;
