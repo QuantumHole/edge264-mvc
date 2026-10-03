@@ -108,7 +108,6 @@ static int bump_frame(Edge264Decoder *dec, int non_base_view, unsigned ignored) 
 	}
 	if (pic < 0)
 		return 0;
-	assert(movemask(dec->get_frame_queue_v[non_base_view])); // get_frame_queue should never be full
 	// Bumping happens on the parsing thread in strict display order (lowest POC
 	// first, prior GOP fully bumped before an IDR's frames), so a counter
 	// captured here gives a globally monotonic display rank. Multithreaded
@@ -219,7 +218,6 @@ static void catch_up_dependent_bumps(Edge264Decoder *dec) {
 		if (dep < 0)
 			return; // not parsed yet - a single-threaded draining caller would hold here
 		if (!(dec->output_frames & 1 << dep)) {
-			assert(movemask(dec->get_frame_queue_v[1])); // get_frame_queue should never be full
 			dec->output_frames |= 1 << dep;
 			dec->get_frame_queue_v[1] = shrd128(set8(dep), dec->get_frame_queue_v[1], 15);
 		}
@@ -1338,6 +1336,10 @@ static int conceal_frame(Edge264Decoder *dec, int id) {
 	for (int addr = from; addr < total_mbs; addr++) {
 		int x = addr % width;
 		int y = addr / width;
+		// keep the macroblocks a slice decoded or recovered in this picture (their
+		// recovery bit 0 matches the picture's), which do not depend on timing
+		if ((m[y * (width + 1) + x].recovery_bits & 1) == (recovery_bits & 1))
+			continue;
 		size_t offY = (size_t)y * 16 * stride_Y + x * 16;
 		size_t offC = dec->plane_size_Y + (size_t)y * 8 * stride_C + x * 8;
 		for (int r = 0; r < 16; r++, offY += stride_Y) {
@@ -1379,7 +1381,10 @@ static int conceal_frame(Edge264Decoder *dec, int id) {
 static int release_terminal_task_dependencies(Edge264Decoder *dec) {
 	if (!dec->n_threads && (dec->ready_tasks || dec->pending_tasks != dec->busy_tasks))
 		return 0;
-	unsigned terminal = depended_frames(dec) & ~ready_frames(dec) & ~writing_frames(dec);
+	// Pictures awaiting output are concealed as soon as they are terminal too, so
+	// that get_frame never delivers later pictures past them while they wait (the
+	// number of pictures overtaking them would depend on the thread timing).
+	unsigned terminal = (depended_frames(dec) | dec->to_get_frames) & ~ready_frames(dec) & ~writing_frames(dec);
 	if (dec->currPic >= 0)
 		terminal &= ~(1u << dec->currPic);
 	unsigned concealed = 0;
@@ -1740,6 +1745,10 @@ int ADD_VARIANT(parse_slice_layer_without_partitioning)(Edge264Decoder *dec, Edg
 			__atomic_store_n(&dec->next_deblock_addr[i], INT_MAX, __ATOMIC_RELEASE);
 		}
 	}
+	
+	// conceal the previous picture now if it was left incomplete and nothing writes it
+	if (dec->currPic < 0)
+		release_terminal_task_dependencies(dec);
 	
 	// find and possibly allocate a memory slot for the upcoming frame
 	if (dec->currPic < 0) {

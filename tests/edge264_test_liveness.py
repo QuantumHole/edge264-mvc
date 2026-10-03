@@ -65,7 +65,7 @@ def run_stdin(
         )
     expected = (
         b"YUV4MPEG2 W16 H16 F24000:1001 Ip A1:1 C420mpeg2\n"
-        + (b"FRAME\n" + frame) * 16
+        + (b"FRAME\n" + frame) * 24
     )
     if completed.stdout != expected:
         raise RuntimeError(
@@ -209,7 +209,7 @@ def main() -> int:
         fixture = Path(directory) / args.fixture.name
         shutil.copyfile(args.fixture.resolve(), fixture)
         frame = bytes([128]) * (16 * 16 + 2 * 8 * 8)
-        fixture.with_suffix(".yuv").write_bytes(frame * 16)
+        fixture.with_suffix(".yuv").write_bytes(frame * 24)
         for mode in ("-s", "-m"):
             run_regular(exe, fixture, mode, args.timeout)
             print(f"PASS {args.fixture.name} {mode} regular")
