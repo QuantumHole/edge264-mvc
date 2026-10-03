@@ -435,7 +435,7 @@ static void recover_slice(Edge264Context *ctx, int currPic, int keep_mb) {
 	ctx->samples_mb[2] = ctx->samples_mb[1] + (ctx->t.stride[1] >> 1);
 	int mb_offset = ctx->mbx + ctx->mby * (ctx->t.pic_width_in_mbs + 1);
 	ctx->_mb = ctx->t.mb_buffer + mb_offset;
-	ctx->mbCol = ctx->t.mbCol_buffer + mb_offset;
+	ctx->mbCol = ctx->t.mbCol_buffer ? ctx->t.mbCol_buffer + mb_offset : ctx->_mb; // no colocated picture outside B slices
 	unsigned num = ctx->CurrMbAddr - ctx->t.first_mb_in_slice;
 	unsigned div = 65536 - ppow(65194, num);
 	for (unsigned i = 0; i < num; i++) {

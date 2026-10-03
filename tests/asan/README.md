@@ -90,3 +90,8 @@ guard against sanitizer aborts and CPU-burn.
   garbage with bsr (the x86-64 baseline), and the following shift by 64 and
   ctz of zero in the bit reader were undefined too. The count is now bounded by
   the 10 leading zeros a valid code can have.
+- recover_p_slice.264: a fuzzer-found stream with a damaged P slice, whose
+  remaining macroblocks recover_slice conceals. It set mbCol from the
+  colocated macroblock array, which is NULL outside B slices, and advanced it
+  per macroblock - pointer arithmetic on NULL is undefined. It now points to
+  the current macroblock there, like initialize_context.
