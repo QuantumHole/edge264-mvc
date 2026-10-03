@@ -817,7 +817,7 @@ int main(int argc, char *argv[])
 				case 'd': display = 1; break;
 				case 'f': print_failed = 1; break;
 				case 'k': skip_unsupported = 1; break;
-				case 'm': n_threads = -1; break;
+				case 'm': n_threads = getenv("EDGE264_THREADS") ? atoi(getenv("EDGE264_THREADS")) : -1; break;
 				case 'o': dump = 1; break;
 				case 'O': dump = 2; break;
 				case 's': n_threads = 0; break;
@@ -855,7 +855,8 @@ int main(int argc, char *argv[])
 			"-k\tkeep decoding past unsupported NALs instead of stopping (e.g. the\n"
 			"\ttype-24 units real 3D Blu-rays carry, which a player skips), and\n"
 			"\tpast corrupt NALs, reporting how many were skipped\n"
-			"-m\tmulti-threaded decoding, auto-detecting cores (this is the default)\n"
+			"-m\tmulti-threaded decoding, auto-detecting cores (this is the default),\n"
+			"\tor using EDGE264_THREADS threads when that variable is set\n"
 			"-o\twrite decoded frames as YUV4MPEG2 (Y4M) to stdout for piping to an\n"
 			"\tencoder, e.g. | ffmpeg -i - -c:v libx264 out.mp4 (base view only)\n"
 			"-O\tlike -o but side-by-side (base|dependent) for frame-compatible 3D\n"
