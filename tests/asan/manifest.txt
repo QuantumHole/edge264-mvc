@@ -8,3 +8,4 @@ reflist_oob
 slice_first_mb_oob
 mc_narrow_picture
 signed_shifts
+cavlc_run_before_zeros

@@ -84,3 +84,9 @@ guard against sanitizer aborts and CPU-burn.
   level offset at level_prefix 0, pack_w on a negative weight, and the DPB
   slot masks `1 << slot` at slot 31. They now shift unsigned values or
   multiply.
+- cavlc_run_before_zeros.264: a fuzzer-found CAVLC stream whose run_before
+  escape code runs into an all-zero bit cache. The code length was
+  clz(cache) + 1, and clz of zero is undefined: it returned 64 with lzcnt and
+  garbage with bsr (the x86-64 baseline), and the following shift by 64 and
+  ctz of zero in the bit reader were undefined too. The count is now bounded by
+  the 10 leading zeros a valid code can have.

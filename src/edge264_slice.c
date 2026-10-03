@@ -180,7 +180,7 @@
 					v = code >> 3;
 					run_before = code & 7;
 				} else {
-					v = clz(ctx->t.gb.msb_cache) + 1;
+					v = clz(ctx->t.gb.msb_cache | (size_t)1 << (SIZE_BIT - 11)) + 1; // at most 10 zeros in a valid code, and never clz(0)
 					run_before = min(v + 3, zerosLeft);
 				}
 				scan -= run_before;
