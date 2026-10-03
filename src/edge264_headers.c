@@ -146,10 +146,23 @@ static int bump_all_frames(Edge264Decoder *dec) {
 		if (dec->get_frame_queue[1][i] >= 0)
 			queued |= 1u << dec->get_frame_queue[1][i];
 	}
-	for (unsigned o = dec->to_get_frames & ~queued; o; o &= o - 1) {
+	// Any picture still incomplete has no writer left (busy_tasks is empty) and
+	// no slice to come, so conceal it now rather than let get_frame emit its
+	// undecoded part with whatever its slot held before - which depends on the
+	// slot allocation, hence on the thread timing. Bases first, since a damaged
+	// dependent view is concealed from its base.
+	for (unsigned o = dec->to_get_frames & ~dec->non_base_frames; o; o &= o - 1) {
 		int i = __builtin_ctz(o);
 		if (__atomic_load_n(&dec->next_deblock_addr[i], __ATOMIC_ACQUIRE) != INT_MAX)
 			conceal_frame(dec, i);
+	}
+	for (unsigned o = dec->to_get_frames & dec->non_base_frames; o; o &= o - 1) {
+		int i = __builtin_ctz(o);
+		if (__atomic_load_n(&dec->next_deblock_addr[i], __ATOMIC_ACQUIRE) != INT_MAX)
+			conceal_frame(dec, i);
+	}
+	for (unsigned o = dec->to_get_frames & ~queued; o; o &= o - 1) {
+		int i = __builtin_ctz(o);
 		int v = dec->non_base_frames >> i & 1;
 		for (int j = 0; j < 16; j++) {
 			if (dec->get_frame_queue[v][j] < 0) {

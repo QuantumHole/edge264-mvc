@@ -201,3 +201,14 @@ multithreaded (`EDGE264_THREADS=8` and `-1`), where these deadlocks surface.
   single-thread, 8-thread, and auto-thread modes. These minimize the scheduler/DPB condition
   from a long MVC decode where an asynchronous slice error orphaned a base-view reference.
   Regresses `progress_or_wait` => hard MT deadlock.
+
+- mvc_truncated_dependent.264: the first 57250 bytes of
+  `tests/conformance/mvc/MVCDS-4.264` (`head -c 57250`), which ends in the middle
+  of the last dependent-view slice. At end-of-stream that dependent picture is
+  incomplete with no task left to finish it, and its base view was held for it
+  forever: `get_frame` only paired a base with a complete dependent, so the
+  drain returned `ENOBUFS` without end. `bump_all_frames` now conceals every
+  incomplete picture once no task writes it, before the drain - which also makes
+  the emitted pixels independent of the DPB slot the picture got (the undecoded
+  part used to show whatever the slot held), so single- and multithreaded
+  decoding agree.

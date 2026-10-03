@@ -171,3 +171,10 @@ incomplete_ref_dependency 2
 # waiting for busy_tasks to drain. Generated with width 10. Regression => flush
 # deadlock (the synchronous path's existing no-ready-task safety net passes).
 incomplete_ref_dependency_eos 2
+# mvc_truncated_dependent: MVCDS-4 cut in the middle of its last dependent-view
+# (NAL type 20) slice, as a capture truncated mid-picture leaves it. The last
+# dependent picture never completes, and get_frame held its complete base for
+# it forever while the end-of-stream drain returned ENOBUFS without end. A
+# correct decoder conceals the incomplete picture at the flush and emits all 9
+# frames, the same single- and multithreaded. Regression => stall.
+mvc_truncated_dependent 9
