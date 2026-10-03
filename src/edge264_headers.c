@@ -233,7 +233,7 @@ static void flush_frames(Edge264Decoder *dec) {
 
 static int alloc_frame(Edge264Decoder *dec, int id, int errno_on_fail) {
 	int mbs = (dec->sps.pic_width_in_mbs + 1) * dec->sps.pic_height_in_mbs - 1;
-	unsigned samples_size = dec->plane_size_Y + dec->plane_size_C + 16; // plus margin for overreads
+	unsigned samples_size = (dec->plane_size_Y + dec->plane_size_C + 16 + 63) & -64; // plus margin for overreads, and cache line alignment of mbs
 	unsigned mbs_size = sizeof(Edge264Macroblock) * mbs;
 	dec->alloc_cb((void **)&dec->samples_buffers[id], samples_size, (void **)&dec->mb_buffers[id], mbs_size, errno_on_fail, dec->alloc_arg);
 	Edge264Macroblock *m = dec->mb_buffers[id];
@@ -314,6 +314,8 @@ static void initialize_context(Edge264Context *ctx, int currPic)
 	ctx->samples_mb[2] = ctx->samples_mb[1] + (ctx->t.stride[1] >> 1);
 	int mb_offset = ctx->mbx + ctx->mby * (ctx->t.pic_width_in_mbs + 1);
 	ctx->mbCol = ctx->_mb = ctx->t.mb_buffer + mb_offset;
+	ctx->mbc_ring_size = ctx->t.pic_width_in_mbs + 2;
+	ctx->_mbc = ctx->mbc_ring + mb_offset % ctx->mbc_ring_size;
 	ctx->A4x4_int8_v = (i16x16){0, 0, 2, 2, 1, 4, 3, 6, 8, 8, 10, 10, 9, 12, 11, 14};
 	ctx->B4x4_int8_v = (i32x16){0, 1, 0, 1, 4, 5, 4, 5, 2, 3, 8, 9, 6, 7, 12, 13};
 	if (ctx->t.ChromaArrayType == 1) {
@@ -535,10 +537,10 @@ static void recover_slice(Edge264Context *ctx, int currPic, int keep_mb) {
 			*(int64_t *)DADDR(cE,  1) = v7[1];
 		} else if (i > 0 && p128 >= 32) { // recover above 25% error (arbitrary)
 			if (ctx->t.slice_type == 0) { // P slice -> P_Skip
-				mb->nC_v[0] = (i8x16){};
+				mb->nC_Y_v = (i8x16){};
 				decode_P_skip(ctx);
 			} else { // B slice -> B_Skip
-				mb->nC_v[0] = (i8x16){};
+				mb->nC_Y_v = (i8x16){};
 				await_frame_progress(ctx, ctx->t.RefPicList[1][0], ctx->mby * ctx->t.pic_width_in_mbs + ctx->mbx + 1);
 				decode_direct_mv_pred(ctx, 0xffffffff);
 			}
@@ -745,11 +747,24 @@ void *ADD_VARIANT(worker_loop)(void *arg) {
 		c.t.next_deblock_idc = (cur_deblock_addr == c.t.first_mb_in_slice) ? currPic : -1;
 		c.t.next_deblock_addr = (cur_deblock_addr == c.t.first_mb_in_slice ||
 			c.t.disable_deblocking_filter_idc == 2) ? c.t.first_mb_in_slice : INT_MIN;
+		
+		// (re)allocate the ring of neighbouring values for this thread, with
+		// room for the copies at both ends and for the alignment of entries
+		int slot = c.thread_id + 1;
+		size_t ret = 0;
+		if (c.d->mbc_ring_sizes[slot] < c.t.pic_width_in_mbs + 2) {
+			free(c.d->mbc_ring_allocs[slot]);
+			c.d->mbc_ring_allocs[slot] = malloc((c.t.pic_width_in_mbs + 4) * sizeof(Edge264MbCache) + 63);
+			c.d->mbc_ring_sizes[slot] = c.d->mbc_ring_allocs[slot] ? c.t.pic_width_in_mbs + 2 : 0;
+		}
+		if (c.d->mbc_ring_allocs[slot])
+			c.mbc_ring = (Edge264MbCache *)(((uintptr_t)c.d->mbc_ring_allocs[slot] + 63) & -64) + 1;
 		initialize_context(&c, currPic);
 		
 		// call the function containing the macroblock decoding loop
-		size_t ret = 0;
-		if (!c.t.pps.entropy_coding_mode_flag) {
+		if (!c.d->mbc_ring_allocs[slot]) {
+			ret = ENOMEM;
+		} else if (!c.t.pps.entropy_coding_mode_flag) {
 			c.mb_skip_run = -1;
 			parse_slice_data_cavlc(&c);
 			if (!rbsp_end(&c.t.gb, 1))

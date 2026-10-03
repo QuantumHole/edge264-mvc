@@ -1090,18 +1090,18 @@ static noinline void deblock_mb(Edge264Context *ctx)
 		i8x16 bS0eegg = ziphi32(bS0aceg, bS0aceg);
 		
 		// for 8x8 blocks with CAVLC, broadcast transform tokens beforehand
-		i8x16 nC = mb->nC_v[0];
+		i8x16 nC = mb->nC_Y_v;
 		if (!ctx->t.pps.entropy_coding_mode_flag && mb->f.transform_size_8x8_flag) {
-			mb->nC_v[0] = nC = (i8x16)((i32x4)nC == 0) - -1;
+			mb->nC_Y_v = nC = (i8x16)((i32x4)nC == 0) - -1;
 		}
 		
 		// compute masks for edges with bS=2
 		static const i8x16 shufV = {0, 2, 8, 10, 1, 3, 9, 11, 4, 6, 12, 14, 5, 7, 13, 15};
 		static const i8x16 shufH = {0, 1, 4, 5, 2, 3, 6, 7, 8, 9, 12, 13, 10, 11, 14, 15};
 		i8x16 nnzv = shuffle(nC, shufV);
-		i8x16 nnzl = shuffle(mbA->nC_v[0], shufV);
+		i8x16 nnzl = shuffle(mbA->nC_Y_v, shufV);
 		i8x16 nnzh = shuffle(nC, shufH);
-		i8x16 nnzt = shuffle(mbB->nC_v[0], shufH);
+		i8x16 nnzt = shuffle(mbB->nC_Y_v, shufH);
 		i8x16 bS2abcd = (nnzv | shrd128(nnzl, nnzv, 12)) > zero;
 		i8x16 bS2efgh = (nnzh | shrd128(nnzt, nnzh, 12)) > zero;
 		i8x16 bS2aacc = trnlo32(bS2abcd, bS2abcd);

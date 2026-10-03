@@ -126,6 +126,15 @@ static const Edge264MbFlags flags_twice = {
 	.CodedBlockPatternChromaAC = 1,
 	.coded_block_flags_16x16 = {1, 1, 1},
 };
+/**
+ * The macroblock array of each frame keeps only the values read after the
+ * macroblock is parsed: by its neighbours, by deblocking (which may run long
+ * after, from another slice), by colocated motion prediction in other frames,
+ * and by error concealment. Its 192 bytes fill exactly 3 cache lines (the
+ * array is 64-byte aligned): flags and references, then the motion vectors of
+ * each list. The frames are written and read back while many others are
+ * decoded at once, so every byte here costs memory bandwidth.
+ */
 typedef struct {
 	int8_t error_probability; // 0..100, must be first for outside API
 	int8_t recovery_bits; // bit 0 is flipped for each new frame, bit 1 signals error
@@ -133,21 +142,36 @@ typedef struct {
 	int8_t filter_edges; // bits 0-1 enable deblocking of A/B edges, bit 2 signals that deblocking is pending
 	union { uint8_t QP[3]; i8x4 QP_s; }; // [iYCbCr]
 	union { uint32_t bits[2]; uint64_t bits_l; }; // {cbp/ref_idx_nz, cbf_Y/Cb/Cr 8x8}
-	union { int8_t Intra4x4PredMode[16]; int32_t Intra4x4PredMode_s[4]; i8x16 Intra4x4PredMode_v; }; // [i4x4]
-	union { int8_t nC[48]; int32_t nC_s[12]; int64_t nC_l[6]; i8x16 nC_v[3]; }; // for CAVLC and deblocking, 64 if unavailable
-	union { uint8_t absMvd[64]; uint64_t absMvd_l[8]; i8x16 absMvd_v[4]; }; // [LX][i4x4][compIdx]
+	union { int8_t nC_Y[16]; i8x16 nC_Y_v; }; // copy of the luma nC for deblocking
 	// fields used by mbCol thus kept together for slice prefetching (do not reorder!)
 	Edge264MbFlags f;
 	union { int8_t refIdx[8]; int32_t refIdx_s[2]; int64_t refIdx_l; }; // [LX][i8x8]
 	union { int8_t refPic[8]; int32_t refPic_s[2]; int64_t refPic_l; }; // [LX][i8x8]
 	union { int16_t mvs[64]; int32_t mvs_s[32]; int64_t mvs_l[16]; i16x8 mvs_v[8]; }; // [LX][i4x4][compIdx]
 } Edge264Macroblock;
+_Static_assert(sizeof(Edge264Macroblock) == 192, "Edge264Macroblock should fill 3 cache lines");
 static Edge264Macroblock unavail_mb = {
 	.f.mb_skip_flag = 1,
 	.f.mb_type_I_NxN = 1,
 	.f.mb_type_B_Direct = 1,
 	.refIdx = {-1, -1, -1, -1, -1, -1, -1, -1},
 	.bits[0] = 0xac, // cbp
+};
+
+/**
+ * Values only read while parsing the macroblocks right of and below them in
+ * the same slice live in a per-thread ring of pic_width_in_mbs + 2 entries,
+ * indexed like the macroblock array (with its unavailable entry at the end of
+ * each row), so they stay in cache. Neighbour A is then at entry -1 and B at
+ * entry +1. The ring is preceded by a copy of its last entry and followed by
+ * a copy of its first entry, so that both offsets hold at its ends.
+ */
+typedef struct {
+	union { int8_t Intra4x4PredMode[16]; int32_t Intra4x4PredMode_s[4]; i8x16 Intra4x4PredMode_v; }; // [i4x4]
+	union { int8_t nC[48]; int32_t nC_s[12]; int64_t nC_l[6]; i8x16 nC_v[3]; }; // for CAVLC and CABAC
+	union { uint8_t absMvd[64]; uint64_t absMvd_l[8]; i8x16 absMvd_v[4]; }; // [LX][i4x4][compIdx]
+} Edge264MbCache;
+static const Edge264MbCache unavail_mbc = {
 	.Intra4x4PredMode = {-2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2},
 };
 
@@ -275,6 +299,9 @@ typedef struct Edge264Context {
 	int32_t mb_skip_run;
 	uint8_t *samples_mb[3]; // address of top-left byte of each plane in current macroblock
 	Edge264Macroblock * _mb; // backup storage for macro mb
+	Edge264MbCache * _mbc; // backup storage for macro mbc, the ring entry of mb
+	Edge264MbCache *mbc_ring; // first entry of the ring (after the copy of its last entry)
+	int32_t mbc_ring_size; // pic_width_in_mbs + 2
 	const Edge264Macroblock * _mbA; // backup storage for macro mbA
 	const Edge264Macroblock * _mbB; // backup storage for macro mbB
 	const Edge264Macroblock * _mbC; // backup storage for macro mbC
@@ -331,10 +358,12 @@ typedef struct Edge264Context {
 	char log_buf[4096];
 } Edge264Context;
 #define mb ctx->_mb
+#define mbc ctx->_mbc
 #define mbA ctx->_mbA
 #define mbB ctx->_mbB
 #define mbC ctx->_mbC
 #define mbD ctx->_mbD
+
 
 
 
@@ -386,6 +415,8 @@ typedef struct Edge264Decoder {
 	void *(*worker_loop)(void *);
 	uint8_t *samples_buffers[32];
 	Edge264Macroblock *mb_buffers[32];
+	void *mbc_ring_allocs[17]; // per worker (thread_id + 1), see Edge264MbCache
+	int32_t mbc_ring_sizes[17];
 	Parser parse_nal_unit[32];
 	pthread_t threads[16];
 	pthread_mutex_t lock;
@@ -504,6 +535,22 @@ typedef struct Edge264Decoder {
 	#endif
 #endif
 
+
+/**
+ * Point mbc to the ring entry of the next macroblock, after copying the first
+ * entry past the end of the ring (where the last entry reads B) and the last
+ * entry before its start (where the first entry reads A).
+ */
+static always_inline void advance_mbc(Edge264Context *ctx) {
+	Edge264MbCache *e = ctx->_mbc;
+	if (e == ctx->mbc_ring)
+		e[ctx->mbc_ring_size] = *e;
+	if (++e == ctx->mbc_ring + ctx->mbc_ring_size) {
+		e[-1 - ctx->mbc_ring_size] = e[-1];
+		e = ctx->mbc_ring;
+	}
+	ctx->_mbc = e;
+}
 
 
 /**

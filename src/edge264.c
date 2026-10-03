@@ -152,7 +152,7 @@ static void internal_alloc(void **samples, unsigned samples_size, void **mbs, un
 				madvise(*samples, size, MADV_HUGEPAGE);
 		} else
 	#endif
-	*samples = aligned_malloc(16, size);
+	*samples = aligned_malloc(64, (size + 63) & ~(size_t)63); // some aligned_alloc require a multiple of the alignment
 	// reason: guard the failed allocation - `NULL + samples_size` is undefined
 	// pointer arithmetic (6.5.6). The caller (alloc_frame) already treats a NULL
 	// samples pointer as failure, so returning NULL for *mbs keeps that contract.
@@ -354,6 +354,8 @@ void edge264_free(Edge264Decoder **pdec) {
 			if (dec->samples_buffers[i] != NULL)
 				dec->free_cb(dec->samples_buffers[i], dec->mb_buffers[i], dec->alloc_arg);
 		}
+		for (int i = 0; i < 17; i++)
+			free(dec->mbc_ring_allocs[i]);
 		aligned_free(dec);
 	}
 }
