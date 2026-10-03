@@ -1,6 +1,41 @@
 #include "edge264_internal.h"
 
 #define pack_w(w0, w1) ((w1) << 8 | (w0) & 255)
+static int release_terminal_task_dependencies(Edge264Decoder *dec);
+
+/**
+ * Wait until the frame in slot pic has made all macroblocks below addr final
+ * (decoded and deblocked), i.e. until its deblock frontier reaches addr. This
+ * is what lets a task start while its references are still being decoded:
+ * every read of another frame's samples or macroblock data is preceded by a
+ * call to await_frame_progress. Single-threaded decoding never waits, since
+ * the references of a task are always complete (or concealed) when it runs.
+ */
+static noinline void wait_frame_progress(Edge264Context *ctx, int pic, int32_t addr) {
+	Edge264Decoder *dec = ctx->d;
+	if (ctx->thread_id < 0)
+		return;
+	for (int i = 0; i < 256; i++) {
+		#if defined(__x86_64__) || defined(__i386__)
+			__builtin_ia32_pause();
+		#endif
+		if (__atomic_load_n(&dec->next_deblock_addr[pic], __ATOMIC_ACQUIRE) >= addr)
+			return;
+	}
+	pthread_mutex_lock(&dec->lock);
+	while (__atomic_load_n(&dec->next_deblock_addr[pic], __ATOMIC_ACQUIRE) < addr) {
+		// conceals pic (or a frame its pending writer depends on) if a damaged
+		// slice left it incomplete with no task left to finish it
+		if (!release_terminal_task_dependencies(dec))
+			pthread_cond_wait(&dec->task_progress, &dec->lock);
+	}
+	pthread_mutex_unlock(&dec->lock);
+}
+static always_inline void await_frame_progress(Edge264Context *ctx, int pic, int32_t addr) {
+	if (__builtin_expect(__atomic_load_n(&ctx->d->next_deblock_addr[pic], __ATOMIC_ACQUIRE) < addr, 0))
+		wait_frame_progress(ctx, pic, addr);
+}
+
 static always_inline i16x8 sixtapHV(i16x8 a, i16x8 b, i16x8 c, i16x8 d, i16x8 e, i16x8 f) {
 	i16x8 af = a + f;
 	i16x8 be = b + e;
@@ -1114,11 +1149,18 @@ static void noinline decode_inter(Edge264Context *ctx, int i, int w, int h) {
 	int y = mb->mvs[i * 2 + 1];
 	int i8x8 = i >> 2;
 	int i4x4 = i & 15;
-	const uint8_t *ref = ctx->t.samples_buffers[mb->refPic[i8x8]];
+	int refPic = mb->refPic[i8x8];
+	const uint8_t *ref = ctx->t.samples_buffers[refPic];
 	int xInt_Y = ctx->mbx * 16 + x444[i4x4] + (x >> 2);
 	int xInt_C = ctx->mbx * 8 + (x444[i4x4] >> 1) + (x >> 3);
 	int yInt_Y = ctx->mby * 16 + y444[i4x4] + (y >> 2);
 	int yInt_C = ctx->mby * 8 + (y444[i4x4] >> 1) + (y >> 3);
+	
+	// wait until the reference rows we read are final, the bottom-most being
+	// read by the 6-tap filter (chroma stays above it), plus the 3 rows that
+	// deblocking the macroblock row below may still modify
+	int mby_ref = min(max(yInt_Y + h + 5, 0) >> 4, ctx->t.pic_height_in_mbs - 1);
+	await_frame_progress(ctx, refPic, (mby_ref + 1) * ctx->t.pic_width_in_mbs);
 	const uint8_t *src_Y = ref + xInt_Y + yInt_Y * ctx->t.stride[0];
 	const uint8_t *src_C = ref + xInt_C + yInt_C * ctx->t.stride[1] + ctx->t.plane_size_Y;
 	size_t sstride_Y = ctx->t.stride[0];

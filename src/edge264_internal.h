@@ -1206,6 +1206,16 @@ static always_inline unsigned ready_frames(Edge264Decoder *c) {
 		ready |= (__atomic_load_n(&c->next_deblock_addr[i], __ATOMIC_ACQUIRE) == INT_MAX) << i;
 	return ready;
 }
+// Frames targeted by a busy (pending or running) task, i.e. that will make
+// progress. In multithreaded mode a task may start as soon as each of its
+// references is complete or has such a writer, and then waits for the rows it
+// needs in wait_frame_progress, which lets consecutive dependent frames overlap.
+static always_inline unsigned writing_frames(Edge264Decoder *dec) {
+	unsigned writing = 0;
+	for (unsigned b = dec->busy_tasks; b; b &= b - 1)
+		writing |= 1u << dec->taskPics[__builtin_ctz(b)];
+	return writing;
+}
 static always_inline int oldest_task(Edge264Decoder *dec, unsigned tasks) {
 	int task_id = tasks ? __builtin_ctz(tasks) : 0;
 	for (unsigned r = tasks & (tasks - 1); r; r &= r - 1) {
@@ -1215,15 +1225,11 @@ static always_inline int oldest_task(Edge264Decoder *dec, unsigned tasks) {
 	}
 	return task_id;
 }
-// Frames targeted by a busy (pending or running) task, i.e. that will make progress.
-static always_inline unsigned writing_frames(Edge264Decoder *dec) {
-	unsigned writing = 0;
-	for (unsigned b = dec->busy_tasks; b; b &= b - 1)
-		writing |= 1u << dec->taskPics[__builtin_ctz(b)];
-	return writing;
+static always_inline unsigned usable_frames(Edge264Decoder *c) {
+	return ready_frames(c) | (c->n_threads ? writing_frames(c) : 0);
 }
 static always_inline unsigned ready_tasks(Edge264Decoder *c) {
-	i32x4 not_ready = ~set32(ready_frames(c));
+	i32x4 not_ready = ~set32(usable_frames(c));
 	i32x4 a = (c->task_dependencies_v[0] & not_ready) == 0;
 	i32x4 b = (c->task_dependencies_v[1] & not_ready) == 0;
 	i32x4 d = (c->task_dependencies_v[2] & not_ready) == 0;

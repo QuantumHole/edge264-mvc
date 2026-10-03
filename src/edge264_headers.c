@@ -528,6 +528,7 @@ static void recover_slice(Edge264Context *ctx, int currPic, int keep_mb) {
 				decode_P_skip(ctx);
 			} else { // B slice -> B_Skip
 				mb->nC_v[0] = (i8x16){};
+				await_frame_progress(ctx, ctx->t.RefPicList[1][0], ctx->mby * ctx->t.pic_width_in_mbs + ctx->mbx + 1);
 				decode_direct_mv_pred(ctx, 0xffffffff);
 			}
 		}
@@ -646,17 +647,21 @@ void *ADD_VARIANT(worker_loop)(void *arg) {
 	if (c.thread_id >= 0)
 		pthread_mutex_lock(&c.d->lock);
 	while (1) {
-		// wait until a task becomes available and reserve it
-		while (c.thread_id >= 0 && !c.d->ready_tasks && !c.d->shutdown)
+		// Wait until the oldest pending task is ready and reserve it. Taking tasks
+		// strictly in decoding order guarantees that every frame a running task
+		// waits on (in wait_frame_progress) has its writers already running, and
+		// that the oldest running task only depends on complete frames, so it
+		// never waits and at least one worker always progresses.
+		int task_id;
+		while (c.thread_id >= 0 && !(c.d->ready_tasks >> (task_id = oldest_task(c.d, c.d->pending_tasks)) & 1) && !c.d->shutdown)
 			pthread_cond_wait(&c.d->task_ready, &c.d->lock);
 		if (c.thread_id >= 0 && c.d->shutdown) { // edge264_free requested a clean exit
 			pthread_mutex_unlock(&c.d->lock);
 			return NULL;
 		}
-		assert((unsigned)c.d->ready_tasks - 1 < 65535); // 0 < ready_tasks < 65536
-		// pick the oldest ready task, so that the slices preceding a task in its
-		// frame (which it waits for in wait_slice_turn) have already started
-		int task_id = oldest_task(c.d, c.d->ready_tasks);
+		if (c.thread_id < 0)
+			task_id = oldest_task(c.d, c.d->ready_tasks);
+		assert(c.d->ready_tasks >> task_id & 1);
 		int currPic = c.d->taskPics[task_id];
 		c.d->pending_tasks &= ~(1 << task_id);
 		c.d->ready_tasks &= ~(1 << task_id);
@@ -767,7 +772,9 @@ void *ADD_VARIANT(worker_loop)(void *arg) {
 			pthread_cond_signal(&c.d->task_complete);
 			// Under the lock, so that a slice waiting for this one in
 			// wait_slice_turn cannot miss it: the unlocked broadcast after
-			// publishing the frontier may precede its wait.
+			// publishing the frontier may precede its wait. Also wakes the tasks
+			// waiting on a frame that this task leaves incomplete, so they see it
+			// has no writer left and conceal it.
 			pthread_cond_broadcast(&c.d->task_progress);
 			if (remaining_mbs == 0) {
 				c.d->ready_tasks = ready_tasks(c.d);
@@ -778,6 +785,8 @@ void *ADD_VARIANT(worker_loop)(void *arg) {
 		c.d->busy_tasks &= ~(1 << task_id);
 		c.d->task_dependencies[task_id] = 0;
 		c.d->taskPics[task_id] = -1;
+		if (c.thread_id >= 0)
+			release_terminal_task_dependencies(c.d);
 		if (c.thread_id < 0)
 			return (void *)ret;
 	}
@@ -1273,18 +1282,20 @@ static int conceal_frame(Edge264Decoder *dec, int id) {
 	return 1;
 }
 
-// Break a task-completion wait on a reference picture that can no longer
-// complete. A damaged slice may leave remaining_mbs positive after its last
-// task exits; later tasks then wait on that frame while every worker sleeps.
-// If every busy task is pending and none is ready, an unresolved dependency
-// with no task targeting its slot has no possible writer. Conceal only those
-// terminal dependencies, recompute readiness, and wake the workers. Conformant
-// streams never enter this path: an incomplete dependency retains an in-flight
-// writer until it reaches INT_MAX.
+// Break a wait on a reference picture that can no longer complete. A damaged
+// slice may leave remaining_mbs positive after its last task exits; later
+// tasks then wait on that frame while every worker sleeps. An unresolved
+// dependency with no task targeting its slot (and not being parsed) has no
+// possible writer. Conceal only those terminal dependencies, recompute
+// readiness, and wake the workers. Single-threaded decoding only does it when
+// no task is ready, while multithreaded workers call it whenever they would
+// otherwise wait on such a frame, since a running task may already wait on the
+// progress of a pending task that depends on it. Conformant streams never enter
+// this path: an incomplete dependency retains a writer until it reaches INT_MAX.
 static int release_terminal_task_dependencies(Edge264Decoder *dec) {
-	if (dec->ready_tasks || dec->pending_tasks != dec->busy_tasks)
+	if (!dec->n_threads && (dec->ready_tasks || dec->pending_tasks != dec->busy_tasks))
 		return 0;
-	unsigned terminal = depended_frames(dec) & ~ready_frames(dec) & ~inflight_frames(dec);
+	unsigned terminal = depended_frames(dec) & ~ready_frames(dec) & ~writing_frames(dec);
 	if (dec->currPic >= 0)
 		terminal &= ~(1u << dec->currPic);
 	unsigned concealed = 0;
@@ -1798,13 +1809,18 @@ int ADD_VARIANT(parse_slice_layer_without_partitioning)(Edge264Decoder *dec, Edg
 	dec->pending_tasks |= 1 << task_id;
 	dec->task_dependencies[task_id] = refs_to_mask(t);
 	// FIXME check against dependencies on non-reference slots
-	dec->ready_tasks |= ((dec->task_dependencies[task_id] & ~ready_frames(dec)) == 0) << task_id;
 	dec->taskPics[task_id] = dec->currPic;
 	dec->task_seq[task_id] = dec->next_task_seq++;
+	dec->ready_tasks |= ((dec->task_dependencies[task_id] & ~usable_frames(dec)) == 0) << task_id;
 	ret = print_dec(dec, dec->n_threads || dec->worker_loop != worker_loop_log ?
 		"  decode_NAL_result: %s\n" : t->pps.entropy_coding_mode_flag ?
 		"  macroblocks_cabac:\n" : "  macroblocks_cavlc:\n", 0);
 	if (dec->n_threads) {
+		// A reference that has no writer left can only be completed by
+		// concealing it, which no other event may trigger before the workers,
+		// taking the oldest pending task first, all wait for this one.
+		if (!(dec->ready_tasks >> task_id & 1))
+			release_terminal_task_dependencies(dec);
 		pthread_cond_signal(&dec->task_ready);
 	} else {
 		if (!dec->ready_tasks) {

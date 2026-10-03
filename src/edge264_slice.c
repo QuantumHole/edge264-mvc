@@ -1791,6 +1791,7 @@ static noinline void CAFUNC(parse_slice_data)
 		if (ctx->t.slice_type == 0) {
 			CACALL(parse_P_mb);
 		} else if (ctx->t.slice_type == 1) {
+			await_frame_progress(ctx, ctx->t.RefPicList[1][0], ctx->CurrMbAddr + 1);
 			const Edge264Macroblock *mbCol = ctx->mbCol;
 			__builtin_prefetch(&mbCol->f);
 			__builtin_prefetch(&mbCol->mvs_v[0]);
