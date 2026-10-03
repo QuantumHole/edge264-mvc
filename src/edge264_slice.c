@@ -137,7 +137,7 @@
 				offset = (15 << suffixLength) - 4096;
 			} else if (i > TrailingOnes || (TotalCoeff > 10 && TrailingOnes < 3)) {
 				v = level_prefix + suffixLength + 1;
-				offset = (level_prefix - 1) << suffixLength;
+				offset = (level_prefix - 1) * (1 << suffixLength); // level_prefix may be 0
 			} else if (level_prefix < 14) {
 				v = level_prefix + 1;
 				offset = level_prefix - 1;

@@ -76,3 +76,11 @@ guard against sanitizer aborts and CPU-burn.
   wrapped, the edge propagation was skipped and the luma filter read up to 13
   bytes before the reference picture (heap-buffer-overflow). The bounds are now
   compared signed.
+- signed_shifts.264: a fuzzer-found stream with explicit weighted prediction
+  and negative weight offsets. Several left shifts of signed values were
+  undefined behaviour (only caught with `SANITIZE=address,undefined`): the
+  explicit offsets of decode_inter (negative in valid streams too), the
+  pic_order_cnt_lsb difference of picture order count type 0, the CAVLC
+  level offset at level_prefix 0, pack_w on a negative weight, and the DPB
+  slot masks `1 << slot` at slot 31. They now shift unsigned values or
+  multiply.

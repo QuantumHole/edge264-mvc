@@ -1262,7 +1262,7 @@ static always_inline unsigned ready_frames(Edge264Decoder *c) {
 	// weakly-ordered target, could observe a torn or stale completion flag.
 	unsigned ready = 0;
 	for (int i = 0; i < 32; i++)
-		ready |= (__atomic_load_n(&c->next_deblock_addr[i], __ATOMIC_ACQUIRE) == INT_MAX) << i;
+		ready |= (unsigned)(__atomic_load_n(&c->next_deblock_addr[i], __ATOMIC_ACQUIRE) == INT_MAX) << i;
 	return ready;
 }
 // Frames targeted by a busy (pending or running) task, i.e. that will make

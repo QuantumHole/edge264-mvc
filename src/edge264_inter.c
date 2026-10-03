@@ -1,6 +1,6 @@
 #include "edge264_internal.h"
 
-#define pack_w(w0, w1) ((w1) << 8 | (w0) & 255)
+#define pack_w(w0, w1) ((int)((unsigned)(w1) << 8 | (w0) & 255)) // w1 may be negative
 static int release_terminal_task_dependencies(Edge264Decoder *dec);
 
 /**
@@ -1235,14 +1235,14 @@ static void noinline decode_inter(Edge264Context *ctx, int i, int w, int h) {
 		refIdx += (i8x8 & 4) * 8;
 		if (__builtin_expect(ctx->t.explicit_weights[0][refIdx] < 128, 1)) {
 			wod[0] = pack_w(0, ctx->t.explicit_weights[0][refIdx]);
-			wod[1] = (ctx->t.explicit_offsets[0][refIdx] * 2 + 1) << ctx->t.luma_log2_weight_denom >> 1;
+			wod[1] = (ctx->t.explicit_offsets[0][refIdx] * 2 + 1) * (1 << ctx->t.luma_log2_weight_denom) >> 1;
 			wod[2] = ctx->t.luma_log2_weight_denom;
 		}
 		if (__builtin_expect(ctx->t.explicit_weights[1][refIdx] < 128, 1)) {
 			wod[4] = pack_w(0, ctx->t.explicit_weights[1][refIdx]);
 			wod[5] = pack_w(0, ctx->t.explicit_weights[2][refIdx]);
-			wod[6] = (ctx->t.explicit_offsets[1][refIdx] * 2 + 1) << ctx->t.chroma_log2_weight_denom >> 1;
-			wod[7] = (ctx->t.explicit_offsets[2][refIdx] * 2 + 1) << ctx->t.chroma_log2_weight_denom >> 1;
+			wod[6] = (ctx->t.explicit_offsets[1][refIdx] * 2 + 1) * (1 << ctx->t.chroma_log2_weight_denom) >> 1;
+			wod[7] = (ctx->t.explicit_offsets[2][refIdx] * 2 + 1) * (1 << ctx->t.chroma_log2_weight_denom) >> 1;
 			wod[3] = ctx->t.chroma_log2_weight_denom;
 		}
 	} else if (i8x8 >= 4) { // explicit2
@@ -1259,24 +1259,24 @@ static void noinline decode_inter(Edge264Context *ctx, int i, int w, int h) {
 		// wider-precision blend (halving would round the odd weight).
 		if (__builtin_expect((ctx->t.explicit_weights[0][refIdxX] & ctx->t.explicit_weights[0][refIdx]) != 128, 1)) {
 			wod[0] = pack_w(ctx->t.explicit_weights[0][refIdxX], ctx->t.explicit_weights[0][refIdx]);
-			wod[1] = ((ctx->t.explicit_offsets[0][refIdxX] + ctx->t.explicit_offsets[0][refIdx] + 1) | 1) << ctx->t.luma_log2_weight_denom;
+			wod[1] = ((ctx->t.explicit_offsets[0][refIdxX] + ctx->t.explicit_offsets[0][refIdx] + 1) | 1) * (1 << ctx->t.luma_log2_weight_denom);
 			wod[2] = ctx->t.luma_log2_weight_denom + 1;
 		} else {
 			wod[0] = pack_w(ctx->t.explicit_weights[0][refIdxX] >> 1, ctx->t.explicit_weights[0][refIdx] >> 1);
-			wod[1] = ((ctx->t.explicit_offsets[0][refIdxX] + ctx->t.explicit_offsets[0][refIdx] + 1) | 1) << ctx->t.luma_log2_weight_denom >> 1;
+			wod[1] = ((ctx->t.explicit_offsets[0][refIdxX] + ctx->t.explicit_offsets[0][refIdx] + 1) | 1) * (1 << ctx->t.luma_log2_weight_denom) >> 1;
 			wod[2] = ctx->t.luma_log2_weight_denom;
 		}
 		if (__builtin_expect((ctx->t.explicit_weights[1][refIdxX] & ctx->t.explicit_weights[1][refIdx]) != 128, 1)) {
 			wod[4] = pack_w(ctx->t.explicit_weights[1][refIdxX], ctx->t.explicit_weights[1][refIdx]);
 			wod[5] = pack_w(ctx->t.explicit_weights[2][refIdxX], ctx->t.explicit_weights[2][refIdx]);
-			wod[6] = ((ctx->t.explicit_offsets[1][refIdxX] + ctx->t.explicit_offsets[1][refIdx] + 1) | 1) << ctx->t.chroma_log2_weight_denom;
-			wod[7] = ((ctx->t.explicit_offsets[2][refIdxX] + ctx->t.explicit_offsets[2][refIdx] + 1) | 1) << ctx->t.chroma_log2_weight_denom;
+			wod[6] = ((ctx->t.explicit_offsets[1][refIdxX] + ctx->t.explicit_offsets[1][refIdx] + 1) | 1) * (1 << ctx->t.chroma_log2_weight_denom);
+			wod[7] = ((ctx->t.explicit_offsets[2][refIdxX] + ctx->t.explicit_offsets[2][refIdx] + 1) | 1) * (1 << ctx->t.chroma_log2_weight_denom);
 			wod[3] = ctx->t.chroma_log2_weight_denom + 1;
 		} else {
 			wod[4] = pack_w(ctx->t.explicit_weights[1][refIdxX] >> 1, ctx->t.explicit_weights[1][refIdx] >> 1);
 			wod[5] = pack_w(ctx->t.explicit_weights[2][refIdxX] >> 1, ctx->t.explicit_weights[2][refIdx] >> 1);
-			wod[6] = ((ctx->t.explicit_offsets[1][refIdxX] + ctx->t.explicit_offsets[1][refIdx] + 1) | 1) << ctx->t.chroma_log2_weight_denom >> 1;
-			wod[7] = ((ctx->t.explicit_offsets[2][refIdxX] + ctx->t.explicit_offsets[2][refIdx] + 1) | 1) << ctx->t.chroma_log2_weight_denom >> 1;
+			wod[6] = ((ctx->t.explicit_offsets[1][refIdxX] + ctx->t.explicit_offsets[1][refIdx] + 1) | 1) * (1 << ctx->t.chroma_log2_weight_denom) >> 1;
+			wod[7] = ((ctx->t.explicit_offsets[2][refIdxX] + ctx->t.explicit_offsets[2][refIdx] + 1) | 1) * (1 << ctx->t.chroma_log2_weight_denom) >> 1;
 			wod[3] = ctx->t.chroma_log2_weight_denom;
 		}
 	}

@@ -676,7 +676,7 @@ int edge264_get_frame(Edge264Decoder *dec, Edge264Frame *out, int borrow) {
 				if (dec->FrameNums[d] != base_fn || dec->FieldOrderCnt[0][d] != base_poc)
 					continue;
 				if (__atomic_load_n(&dec->next_deblock_addr[d], __ATOMIC_ACQUIRE) == INT_MAX) {
-					dec->output_frames |= 1 << d;
+					dec->output_frames |= 1u << d;
 					dec->get_frame_queue_v[1] = shrd128(set8(d), dec->get_frame_queue_v[1], 15);
 					idx1 = 0;
 					pic1 = d;
@@ -730,8 +730,8 @@ int edge264_get_frame(Edge264Decoder *dec, Edge264Frame *out, int borrow) {
 		int topC = dec->sps.chroma_format_idc == 3 ? top : top >> 1;
 		int leftC = dec->sps.chroma_format_idc == 1 ? left >> 1 : left;
 		int offC = dec->plane_size_Y + topC * dec->out.stride_C + (dec->out.bit_depth_C == 8 ? leftC : leftC << 1);
-		assert(dec->to_get_frames & dec->output_frames & 1 << pic0);
-		dec->to_get_frames &= ~(1 << pic0);
+		assert(dec->to_get_frames & dec->output_frames & 1u << pic0);
+		dec->to_get_frames &= ~(1u << pic0);
 		out->samples[0] = dec->samples_buffers[pic0] + offY;
 		out->samples[1] = dec->samples_buffers[pic0] + offC;
 		out->samples[2] = dec->samples_buffers[pic0] + offC + (dec->out.stride_C >> 1);
@@ -743,8 +743,8 @@ int edge264_get_frame(Edge264Decoder *dec, Edge264Frame *out, int borrow) {
 		out->return_arg = (void *)((uintptr_t)1 << pic0);
 		if (idx1 >= 0) {
 			dec->get_frame_queue[1][idx1] = -1;
-			assert(dec->to_get_frames & dec->output_frames & 1 << pic1);
-			dec->to_get_frames ^= 1 << pic1;
+			assert(dec->to_get_frames & dec->output_frames & 1u << pic1);
+			dec->to_get_frames ^= 1u << pic1;
 			out->samples_mvc[0] = dec->samples_buffers[pic1] + offY;
 			out->samples_mvc[1] = dec->samples_buffers[pic1] + offC;
 			out->samples_mvc[2] = dec->samples_buffers[pic1] + offC + (dec->out.stride_C >> 1);
