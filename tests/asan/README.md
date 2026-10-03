@@ -95,3 +95,8 @@ guard against sanitizer aborts and CPU-burn.
   colocated macroblock array, which is NULL outside B slices, and advanced it
   per macroblock - pointer arithmetic on NULL is undefined. It now points to
   the current macroblock there, like initialize_context.
+- unaligned_loads.264: a fuzzer-found stream whose motion vectors and intra
+  neighbours read rows at unaligned addresses. The SSE versions of loadu32,
+  loadu32x4 and loadu64x2 dereferenced cast int32_t / int64_t pointers, which
+  is undefined on an unaligned address; they now load through memcpy, like the
+  NEON and generic versions, which compiles to the same single moves.

@@ -778,11 +778,12 @@ static const int8_t shz_mask[48] = {
 	#define combine64(a, b) (i64x2)_mm_shuffle_ps((__m128)(a), (__m128)(b), _MM_SHUFFLE(3, 2, 1, 0))
 	#define cvthi8u16(a) (u16x8)_mm_unpackhi_epi8(a, (i8x16){})
 	#define cvthi16u32(a) (u32x4)_mm_unpackhi_epi16(a, (i8x16){})
-	#define loadu32(p) ((i32x4){*(int32_t *)(p)}) // GCC < 12 doesn't define _mm_loadu_si32
+	// unaligned scalar loads go through memcpy, which compiles to a single move
+	static always_inline i32x4 loadu32(const void *p) {int32_t a; memcpy(&a, p, 4); return (i32x4){a};} // GCC < 12 doesn't define _mm_loadu_si32
 	#define loadu64(p) (i64x2)_mm_loadl_epi64((__m128i*)(p))
 	#define loadu128(p) (i8x16)_mm_loadu_si128((__m128i*)(p))
-	#define loadu32x4(p0, p1, p2, p3) (i32x4){*(int32_t *)(p0), *(int32_t *)(p1), *(int32_t *)(p2), *(int32_t *)(p3)}
-	#define loadu64x2(p0, p1) (i64x2){*(int64_t *)(p0), *(int64_t *)(p1)}
+	static always_inline i32x4 loadu32x4(const void *p0, const void *p1, const void *p2, const void *p3) {int32_t a[4]; memcpy(a, p0, 4); memcpy(a + 1, p1, 4); memcpy(a + 2, p2, 4); memcpy(a + 3, p3, 4); return (i32x4){a[0], a[1], a[2], a[3]};}
+	static always_inline i64x2 loadu64x2(const void *p0, const void *p1) {int64_t a, b; memcpy(&a, p0, 8); memcpy(&b, p1, 8); return (i64x2){a, b};}
 	#define maxu8(a, b) (i8x16)_mm_max_epu8(a, b)
 	#define minu8(a, b) (i8x16)_mm_min_epu8(a, b)
 	#define max16(a, b) (i16x8)_mm_max_epi16(a, b)
