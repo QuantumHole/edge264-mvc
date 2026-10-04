@@ -223,7 +223,7 @@ endif
 
 # ---- Final CFLAGS ------------------------------------------------------------
 # Required flags are prepended; user CFLAGS come last so they can always override.
-_THREAD_FLAG := $(if $(findstring $(OS),macos linux android),-pthread)
+_THREAD_FLAG := $(if $(findstring $(OS),macos linux android windows),-pthread)
 override CFLAGS := $(_BASE_ARCH) -std=gnu11 -O3 -flax-vector-conversions -Wno-override-init $(_THREAD_FLAG) $(SANITIZE_FLAGS) $(CFLAGS)
 
 # ---- Object file flags -------------------------------------------------------
@@ -239,6 +239,10 @@ override OBJFLAGS := $(_PIC_FLAG) -fvisibility=hidden -DEDGE264MVC_BUILD $(OBJFL
 # ---- Common linker flags -----------------------------------------------------
 ifeq ($(OS),wasm)
   override LDFLAGS := -sSTRICT=1 -sALLOW_MEMORY_GROWTH=1 $(SANITIZE_FLAGS) $(LDFLAGS)
+else ifeq ($(OS),windows)
+  # link winpthreads and the GCC runtime statically, so that the DLL and the
+  # tools need no MinGW runtime DLL beside them
+  override LDFLAGS := -static $(SANITIZE_FLAGS) $(LDFLAGS)
 else
   override LDFLAGS := $(SANITIZE_FLAGS) $(LDFLAGS)
 endif
@@ -252,7 +256,9 @@ else ifeq ($(OS),linux)
 else ifeq ($(OS),android)
   override LIBFLAGS := -shared $(LDFLAGS) $(LIBFLAGS)
 else ifeq ($(OS),windows)
-  override LIBFLAGS := -shared $(LDFLAGS) $(LIBFLAGS)
+  # the import library lets MinGW link with -ledge264mvc (pkg-config) and gives
+  # CMake the IMPORTED_IMPLIB a shared library needs on Windows
+  override LIBFLAGS := -shared -Wl,--out-implib,libedge264mvc.dll.a $(_THREAD_FLAG) $(LDFLAGS) $(LIBFLAGS)
 else ifeq ($(OS),wasm)
   override LIBFLAGS := -sEXPORTED_FUNCTIONS=_malloc,_free,_edge264mvc_api_version,_edge264mvc_version,_edge264mvc_default_settings,_edge264mvc_open,_edge264mvc_close,_edge264mvc_send_nal,_edge264mvc_send_end,_edge264mvc_receive_frame,_edge264mvc_release_frame,_edge264mvc_flush,_edge264mvc_find_start_code $(LDFLAGS) $(LIBFLAGS)
 endif
@@ -360,6 +366,11 @@ ifeq ($(OS),macos)
 	$(Q)ln -sf $(LIBNAME) $(DESTDIR)$(libdir)/libedge264mvc.dylib
   endif
 endif
+ifeq ($(OS),windows)
+  ifneq ($(STATIC),yes)
+	$(Q)install -m 644 libedge264mvc.dll.a $(DESTDIR)$(libdir)/
+  endif
+endif
 	$(Q)( \
 	  echo 'prefix=$(PREFIX)'; \
 	  echo 'exec_prefix=$${prefix}'; \
@@ -388,7 +399,7 @@ uninstall:
 # ==============================================================================
 .PHONY: clean clear
 clean clear:
-	$(Q)rm -f edge264mvc_test edge264mvc_test.exe edge264mvc_test.js edge264mvc_test.wasm edge264mvc_check edge264mvc_check.exe edge264mvc_check.js edge264mvc_check.wasm conformance_check conformance_check.exe liveness_check liveness_check.exe asan_check asan_check.exe api_check api_check.exe fuzz_decode edge264*.o libedge264mvc.a edge264mvc.$(MAJOR).dll edge264mvc.js edge264mvc.wasm libedge264mvc.$(MAJOR).dylib libedge264mvc-universal.$(MAJOR).dylib libedge264mvc.so libedge264mvc.so.$(MAJOR)
+	$(Q)rm -f edge264mvc_test edge264mvc_test.exe edge264mvc_test.js edge264mvc_test.wasm edge264mvc_check edge264mvc_check.exe edge264mvc_check.js edge264mvc_check.wasm conformance_check conformance_check.exe liveness_check liveness_check.exe asan_check asan_check.exe api_check api_check.exe fuzz_decode edge264*.o libedge264mvc.a edge264mvc.$(MAJOR).dll libedge264mvc.dll.a edge264mvc.js edge264mvc.wasm libedge264mvc.$(MAJOR).dylib libedge264mvc-universal.$(MAJOR).dylib libedge264mvc.so libedge264mvc.so.$(MAJOR)
 
 
 # ==============================================================================

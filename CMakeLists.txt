@@ -103,7 +103,7 @@ ExternalProject_Add(edge264mvc_ext
   # Objects are written next to the sources; do not copy the tree.
   BUILD_IN_SOURCE   TRUE
   # Declaring the output lets CMake track the dependency correctly.
-  BUILD_BYPRODUCTS  "${_prefix}/lib/${_libfile}"
+  BUILD_BYPRODUCTS  "${_prefix}/lib/${_libfile}" "${_prefix}/lib/libedge264mvc.dll.a"
 )
 
 # ---- Imported target ---------------------------------------------------------
@@ -121,6 +121,10 @@ file(MAKE_DIRECTORY "${_prefix}/include")
 set_target_properties(edge264mvc PROPERTIES
   IMPORTED_LOCATION             "${_prefix}/lib/${_libfile}"
   INTERFACE_INCLUDE_DIRECTORIES "${_prefix}/include")
+if(_os STREQUAL "windows" AND _static STREQUAL "no")
+  # a shared library is linked through its import library on Windows
+  set_target_properties(edge264mvc PROPERTIES IMPORTED_IMPLIB "${_prefix}/lib/libedge264mvc.dll.a")
+endif()
 
 # Canonical namespaced alias consumed by downstream targets.
 add_library(edge264mvc::edge264mvc ALIAS edge264mvc)
