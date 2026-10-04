@@ -7,7 +7,7 @@ comparable hash). Each fixture is decoded with a progress guard; the harness
 asserts it delivers the expected number of base-view frames without stalling
 (an assert-abort regression instead crashes the harness, which `make` reports as
 a failed target). Each fixture runs in a forked child under a wall-clock timeout,
-so a deadlock where `edge264_decode_NAL` itself never returns (which the
+so a deadlock where `decode_nal` itself never returns (which the
 in-process progress guard cannot catch) is reported as a clean "deadlock" FAIL
 instead of hanging the whole suite. The liveness suite is also run
 multithreaded (`EDGE264_THREADS=8` and `-1`), where these deadlocks surface.
@@ -17,7 +17,7 @@ multithreaded (`EDGE264_THREADS=8` and `-1`), where these deadlocks surface.
   base frame thus loses its POC-matching dependent. ffmpeg decodes the full
   9-frame base view of this stream; edge264 must too (emitting the unpairable
   base alone with zeroed _mvc), not deadlock. Regresses bug M1 (edge264.c
-  edge264_get_frame MVC pairing) if the liveness valve is removed.
+  get_frame MVC pairing) if the liveness valve is removed.
 
 - dpb_frame_num_gap.264: a frame_num gap (8.2.5.2) where every reference slot
   is already long-term, so no short-term slot can be reclaimed for the inferred
@@ -61,7 +61,7 @@ multithreaded (`EDGE264_THREADS=8` and `-1`), where these deadlocks surface.
 - incomplete_frame.264: a synthetic IDR (30 bytes), generated with tests/gen_avc.py,
   whose SPS declares a 2-macroblock picture (2x1 MBs) but whose only coded slice
   carries just 1 macroblock. The picture therefore never completes
-  (remaining_mbs > 0 and next_deblock_addr stays != INT_MAX). edge264_get_frame
+  (remaining_mbs > 0 and next_deblock_addr stays != INT_MAX). get_frame
   skips not-yet-deblocked pictures, which is correct mid-stream but at end-of-stream
   deadlocked: bump_all_frames kept returning ENOBUFS while the draining caller got
   nothing back, spinning forever. The fix lets get_frame emit such a picture while
@@ -69,7 +69,7 @@ multithreaded (`EDGE264_THREADS=8` and `-1`), where these deadlocks surface.
   so the decoder delivers the partial picture (1) and terminates. This is the class
   of real captured TS/M2TS clips that end mid-frame - ffmpeg conceals the partial
   picture and terminates likewise. Regresses the end-of-stream forward-progress
-  valve (edge264.c edge264_get_frame) => stall.
+  valve (edge264.c get_frame) => stall.
 
 - vui_overread.264: a synthetic SPS+PPS+IDR (43 bytes) generated with tests/gen_avc.py,
   with the SPS NAL's last 2 bytes trimmed afterwards so its VUI over-reads past the SPS
@@ -106,7 +106,7 @@ multithreaded (`EDGE264_THREADS=8` and `-1`), where these deadlocks surface.
   and it never finalizes (the state a corrupt stream leaves when a slice errors mid-frame).
   The SPS VUI sets max_num_reorder_frames = 0, so each complete picture is output
   immediately; the held incomplete picture has the lowest pending POC, so it is bumped into
-  the 16-entry output queue but skipped by edge264_get_frame (an unfinished picture is held
+  the 16-entry output queue but skipped by get_frame (an unfinished picture is held
   back mid-stream). The following complete higher-POC pictures ARE delivered, so they keep
   bumping and shift the unfinished one out of the queue. Orphaned (still in to_get_frames
   but no longer queued), it made bump_all_frames return ENOBUFS forever at end-of-stream:
@@ -152,7 +152,7 @@ multithreaded (`EDGE264_THREADS=8` and `-1`), where these deadlocks surface.
   clears: the worker never runs the task and the frame never completes. The 18 slices code one
   picture (> the 16 task slots), so the self-dependent tasks exhaust the pool and
   parse_slice_layer_without_partitioning blocks forever waiting for a free task slot -
-  edge264_decode_NAL never returns. This is a true internal deadlock, not an ENOBUFS spin, so
+  decode_nal never returns. This is a true internal deadlock, not an ENOBUFS spin, so
   the in-process progress guard cannot catch it; the harness therefore decodes each fixture in a
   forked child under a wall-clock timeout and reports an overrun as a clean "deadlock" FAIL. The
   fix rejects each base-less inter-coded dependent slice as corrupt (EBADMSG) and delivers 0
@@ -175,7 +175,7 @@ multithreaded (`EDGE264_THREADS=8` and `-1`), where these deadlocks surface.
   reallocated the freed DPB slot for the next picture, and the stale tasks' remaining_mbs
   subtractions corrupted the new occupant's counter - the frame never finalized, every later
   task depending on it stayed un-ready, and once all 16 task slots filled the parser blocked
-  forever in its task-slot wait inside edge264_decode_NAL (the deadlock diagnosed on a real
+  forever in its task-slot wait inside decode_nal (the deadlock diagnosed on a real
   trimmed 3D-BD capture, where dependent-view slices also started failing with spurious EBADMSG
   and remaining_mbs went negative). Single-threaded decoding of the same bytes was always fine.
   The fix is two guards: get_frame's orphan valve defers the drop until the dependent has no
@@ -183,7 +183,7 @@ multithreaded (`EDGE264_THREADS=8` and `-1`), where these deadlocks surface.
   additionally treats any slot still written by a busy task as unavailable (inflight_frames).
   Expected: the 4 body stereo pairs (4 base frames); every tail dependent is dropped (it has no
   base to pair with), like ffmpeg, and the decoder terminates. Regresses either guard
-  (edge264.c edge264_get_frame orphan valve, edge264_headers.c
+  (edge264.c get_frame orphan valve, edge264_headers.c
   parse_slice_layer_without_partitioning slot allocation) => deadlock or crash (multithreaded).
 
 - incomplete_ref_dependency.264 and incomplete_ref_dependency_eos.264: 177-byte and

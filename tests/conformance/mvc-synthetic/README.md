@@ -77,7 +77,7 @@ decoder reproduces that hash. Run it from the repo root:
   3.0, `gaps_in_frame_num_value_allowed_flag = 1`.
 
 - **mvc_same_poc_pairing** (320 frames) - a **fork regression guard** for the
-  *primary* dependent-view pairing scan in `edge264_get_frame`. Structurally derived
+  *primary* dependent-view pairing scan in `get_frame`. Structurally derived
   from a real 3D-Blu-ray menu clip - **headers only, all-128, no picture data**: many
   short IDR sequences with a 4-bit POC lsb (`log2_max_pic_order_cnt_lsb = 4`) make
   frames of different sequences share a full POC while carrying different `frame_num`,

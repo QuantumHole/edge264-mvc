@@ -12,7 +12,7 @@
 # tasks' remaining_mbs subtractions then corrupted the new occupant's counter -
 # the frame never finalized, every later task depending on it stayed un-ready,
 # and once all 16 task slots filled the parser deadlocked in its task-slot wait
-# (0% CPU, edge264_decode_NAL never returns). Single-threaded decoding of the
+# (0% CPU, decode_nal never returns). Single-threaded decoding of the
 # same bytes is fine, so the fixture asserts the multithreaded modes.
 #
 # Construction: a 16x16-MB two-view body (IDR pair + 3 P pairs), then N

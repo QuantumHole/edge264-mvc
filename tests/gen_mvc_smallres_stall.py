@@ -3,7 +3,7 @@
 # stream long enough to fill the DPB before end-of-stream. A tiny picture infers
 # a large reorder window (MaxDpbMbs / PicSizeInMbs, capped at 16), so the
 # per-view fullness bump queues a base while its already-decoded dependent still
-# sits unbumped - the stall fixed in edge264.c (edge264_get_frame). Pre-fix the
+# sits unbumped - the stall fixed in edge264.c (get_frame). Pre-fix the
 # decoder delivers 0 frames then spins on ENOBUFS; post-fix it delivers all N.
 #
 # Every macroblock is residual-free (I_NxN DC=128 IDRs, zero-motion no-residual

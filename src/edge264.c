@@ -242,7 +242,7 @@ static Edge264Decoder *alloc_decoder(int n_threads, Edge264LogCb log_cb, void *l
 		n_threads = n_cpus > 1 ? n_cpus : 0; // a single core or a failed detection -> single-threaded
 	}
 	// reason: clamp to the fixed-size worker pool and persist the result, because
-	// edge264_free's join loop uses dec->n_threads as its bound (`i < dec->n_threads`).
+	// free_decoder's join loop uses dec->n_threads as its bound (`i < dec->n_threads`).
 	// Leaving a raw value here - the -1 auto-detect sentinel, or an explicit request
 	// larger than the pool - makes the spawn loop write pthread handles past
 	// dec->threads[] straight into the adjacent mutex/condvars, and the join loop
@@ -362,7 +362,7 @@ static void unblock_output(Edge264Decoder *dec) {
 
 // Frees a decoder-owned copy of a slice NAL once its worker thread is done with
 // it. Installed as the task's unref_cb in the multithreaded path (see
-// edge264_decode_NAL) - workers decode slices asynchronously after decode_NAL
+// decode_nal) - workers decode slices asynchronously after decode_NAL
 // returns, so the slice bytes must outlive the caller's buffer. The argument is
 // the allocation base (front padding included), released with aligned_free to
 // match aligned_malloc (plain free on an _aligned_malloc pointer corrupts the
@@ -644,7 +644,7 @@ static int get_frame(Edge264Decoder *dec, Edge264Frame *out, int borrow) {
 		// If that dependent is permanently missing (a dropped/corrupt
 		// dependent NAL on a damaged 3D stream), holding the base would
 		// deadlock once the DPB can no longer buffer another frame without
-		// output - the exact fullness condition edge264_decode_NAL uses to
+		// output - the exact fullness condition decode_nal uses to
 		// return ENOBUFS. Emit the unpaired base alone (zeroed _mvc, like the
 		// 2D path) so the caller always makes forward progress. In a
 		// well-formed stream the dependent is already queued (idx1 >= 0), so

@@ -295,7 +295,7 @@ int ADD_VARIANT(parse_end_of_sequence)(Edge264Decoder *dec, Edge264UnrefCb unref
 		// stayed held here and a multi-clip caller that ends a clip on this NAL
 		// (rather than the buf>=end drain) spun ENOBUFS on it. Set flushing so the
 		// unpaired-base valve fires and the tail is emitted; the next NAL clears the
-		// flag again (edge264_decode_NAL), so a following sequence is unaffected.
+		// flag again (decode_nal), so a following sequence is unaffected.
 		dec->flushing = 1;
 		if (bump_all_frames(dec))
 			return ENOBUFS;
@@ -747,7 +747,7 @@ void *ADD_VARIANT(worker_loop)(void *arg) {
 		int task_id;
 		while (c.thread_id >= 0 && !(c.d->ready_tasks >> (task_id = oldest_task(c.d, c.d->pending_tasks)) & 1) && !c.d->shutdown)
 			pthread_cond_wait(&c.d->task_ready, &c.d->lock);
-		if (c.thread_id >= 0 && c.d->shutdown) { // edge264_free requested a clean exit
+		if (c.thread_id >= 0 && c.d->shutdown) { // free_decoder requested a clean exit
 			pthread_mutex_unlock(&c.d->lock);
 			return NULL;
 		}
@@ -1698,7 +1698,7 @@ int ADD_VARIANT(parse_slice_layer_without_partitioning)(Edge264Decoder *dec, Edg
 	// frame, which in the multithreaded path never clears - the worker never runs
 	// it, the frame never completes, and once 16 such tasks pile up the parser
 	// blocks forever waiting for a free task slot (a hard deadlock, never returning
-	// from edge264_decode_NAL). Reject the slice as corrupt before it reserves any
+	// from decode_nal). Reject the slice as corrupt before it reserves any
 	// decoder state; matches ffmpeg, which reports the missing base view and
 	// produces no frame. Restricted to P/B slices (slice_type < 2): an intra
 	// dependent slice has no RefPicList and no inter-view reference, so it decodes

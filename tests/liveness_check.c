@@ -35,11 +35,11 @@
 #define RESET "\e[0m"
 
 // Re-feeding the same NAL this many times with neither a delivered frame nor a
-// non-ENOBUFS result means the decoder cannot make progress => stall.
+// result other than EDGE264MVC_AGAIN means the decoder cannot make progress => stall.
 #define STALL_LIMIT 4096
 
-// Wall-clock budget for one fixture. The progress guard above catches an ENOBUFS
-// spin, but NOT a decoder deadlock where edge264_decode_NAL itself never returns
+// Wall-clock budget for one fixture. The progress guard above catches an EDGE264MVC_AGAIN
+// spin, but NOT a decoder deadlock where edge264mvc_send_nal itself never returns
 // (e.g. a multithreaded worker/parser cyclic wait). Such a hang cannot be
 // detected in-process, so each fixture is decoded in a forked child bounded by
 // this timeout; overrun => the child is killed and the fixture FAILs as a
@@ -198,7 +198,7 @@ static int do_run(const char *manifest, const char *dir) {
 		int got = decode_count_forked(buf, size);
 		free(buf);
 		if (got == -2) {
-			printf(RED "FAIL" RESET " %s (deadlock: decode_NAL did not return within %ds)\n", name, TIMEOUT_SEC);
+			printf(RED "FAIL" RESET " %s (deadlock: send_nal did not return within %ds)\n", name, TIMEOUT_SEC);
 			failed++;
 		} else if (got < 0) {
 			printf(RED "FAIL" RESET " %s (stall: no forward progress)\n", name);

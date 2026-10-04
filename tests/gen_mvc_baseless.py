@@ -35,7 +35,7 @@ HEADER = """--- # MVC dependent view with NO base view (undecodable base).
 # width=0/height=0, no frame). Without a base, each dependent P slice's inter-view
 # reference falls back to its own not-yet-decoded frame slot, so its decode task
 # depends on its own frame; multithreaded, that never clears and the tasks pile
-# up until the parser deadlocks waiting for a free task slot (edge264_decode_NAL
+# up until the parser deadlocks waiting for a free task slot (decode_nal
 # never returns). One picture is split into %d single-MB slices to exceed the 16
 # task slots. A correct decoder rejects each base-less inter-coded dependent slice
 # (EBADMSG) and terminates, delivering 0 frames (like ffmpeg).

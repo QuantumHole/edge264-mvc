@@ -5,7 +5,7 @@
 # so remaining_mbs stays > 0 and the picture never finalizes - the same state a
 # corrupt broadcast stream leaves when a slice errors mid-frame). It has the
 # lowest output POC, so it is bumped into the 16-entry output queue but skipped by
-# edge264_get_frame (an unfinished picture is held back mid-stream); the following
+# get_frame (an unfinished picture is held back mid-stream); the following
 # complete higher-POC pictures ARE delivered, so they keep bumping and shift the
 # unfinished one out of the queue. Orphaned (in to_get_frames but no longer
 # queued), it made bump_all_frames spin ENOBUFS forever at end-of-stream, losing
