@@ -561,6 +561,10 @@ static void recover_slice(Edge264MvcContext *ctx, int currPic, int keep_mb) {
 		} else if (i > 0 && p128 >= 32) { // recover above 25% error (arbitrary)
 			if (ctx->t.slice_type == 0) { // P slice -> P_Skip
 				mb->nC_Y_v = (i8x16){};
+				// reason: decode_P_skip relies on the refIdx the P macroblock parser
+				// sets before it, without which explicit weighted prediction would
+				// index its weights with the -1 of an intra or unparsed macroblock
+				mb->refIdx_l = (int64_t)(i8x8){0, 0, 0, 0, -1, -1, -1, -1};
 				decode_P_skip(ctx);
 			} else { // B slice -> B_Skip
 				mb->nC_Y_v = (i8x16){};

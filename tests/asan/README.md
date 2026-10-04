@@ -169,3 +169,11 @@ guard against sanitizer aborts and CPU-burn.
   sanitizer build of check-asan). Picture order counts are now added modulo
   2^32, in all three pic_order_cnt_type derivations, the frame_num gap and
   MMCO 5.
+- recover_p_skip_weights.264: a fuzzer-found stream with a damaged P slice
+  that uses explicit weighted prediction. recover_slice conceals the
+  remaining macroblocks as P_Skip, but decode_P_skip relies on the reference
+  indices the P macroblock parser sets before it, so the concealed macroblock
+  kept the -1 of an intra or unparsed macroblock, and the weighted prediction
+  read its weights at index -1 (reported by UndefinedBehaviorSanitizer, so it
+  shows in the sanitizer build of check-asan). recover_slice now sets them as
+  the parser does.
