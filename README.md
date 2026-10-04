@@ -9,7 +9,7 @@ edge264-mvc is derived from [edge264](https://github.com/tvlabs/edge264) by Thib
 ## Why edge264-mvc
 
 - **3D Blu-ray decoding that works end to end** - both eye views of every picture, paired and in display order.
-- **Fast** - on one core it decodes 1080p video about 1.24 times as fast as edge264, and with all cores of an 8-core CPU about 4 times as fast again. Consecutive pictures and the slices of a picture are decoded in parallel; edge264's experimental multithreading hangs, and in our tests edge264 failed on 3D Blu-ray and 4K video.
+- **Fast** - consecutive pictures and the slices of a picture are decoded in parallel on all cores, which makes 1080p decoding about 4 times as fast as on one core on an 8-core CPU. edge264's experimental multithreading hangs; on one core edge264-mvc is 3% to 24% faster than edge264, depending on CPU and compiler, and in our tests edge264 failed on 3D Blu-ray and 4K video.
 - **Robust on damaged streams** - missing or damaged parts are concealed and decoding continues. The decoder is fuzzed under AddressSanitizer and UndefinedBehaviorSanitizer, and its threading is checked with ThreadSanitizer.
 - **A small API that is hard to misuse** - send NAL units, receive frames; timestamps travel with their pictures, every frame reports whether part of it was concealed, and the results have the same values on every platform.
 - **Tested on every change** - the output is compared with the ITU reference decoder on the conformance streams, on Linux and Windows, single- and multithreaded, and the decoder runs under the sanitizers and a fuzzer.

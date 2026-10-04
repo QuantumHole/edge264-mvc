@@ -10,7 +10,7 @@ Worker threads decode consecutive pictures at the same time, the way FFmpeg's fr
 
 ## Performance
 
-Measured on an 8-core / 16-thread laptop CPU, by running the old and new build side by side so that other load hits both alike. Against edge264 (commit 2c2ab95), 1080p video decodes about 1.24 times as fast on one core; edge264's experimental multithreading hangs, and in our tests edge264 failed on 3D Blu-ray and 4K video. Against FFmpeg, decoding is 5% (4K) to 22% (1080p) faster with 16 threads, and 11% to 26% faster single-threaded (FFmpeg cannot decode the MVC dependent view, so MVC was compared on the base view). Decoding several pictures at once is limited by memory bandwidth rather than by computation, so several of these changes reduce the bytes written and read per macroblock:
+Measured on an 8-core / 16-thread laptop CPU, by running the old and new build side by side so that other load hits both alike. Against edge264 (commit 2c2ab95), 1080p video decodes about 1.24 times as fast on one core on this CPU (3% to 16% faster on the GitHub-hosted runners of the benchmark figure, depending on the compiler); edge264's experimental multithreading hangs, and in our tests edge264 failed on 3D Blu-ray and 4K video. Against FFmpeg, decoding is 5% (4K) to 22% (1080p) faster with 16 threads, and 11% to 26% faster single-threaded (FFmpeg cannot decode the MVC dependent view, so MVC was compared on the base view). Decoding several pictures at once is limited by memory bandwidth rather than by computation, so several of these changes reduce the bytes written and read per macroblock:
 
 | Change | Effect |
 |---|---|
