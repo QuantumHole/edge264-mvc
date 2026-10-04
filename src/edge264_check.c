@@ -53,7 +53,7 @@ static int cmp(const struct dirent **a, const struct dirent **b) {
 
 #define PASSERT(cond, prefix) { if (!(cond)) { perror(prefix); exit(1); } }
 #define ASSERT(cond, msg, ...) { if (!(cond)) { printf(RED msg RESET, ##__VA_ARGS__); exit(1); } }
-static int log_callback(const char *str, void *_) { if (log_tester) log_tester(str); return 0; }
+static void log_callback(const char *str, void *_) { if (log_tester) log_tester(str); }
 static void print_logger(const char *str) { fputs(str, stdout); }
 static void max_logs_logger(const char *str) {
 	ASSERT(strlen(str) + 1 == sizeof(dec->log_buf),
@@ -86,25 +86,56 @@ static void assert_block(const char *name, size_t pstride, const uint8_t *p, int
 
 
 
-static void parse_NALs(const char *name, const uint8_t *nal, const uint8_t *end, void (*post_test)(), const uint8_t *expect) {
-	nal += 3 + (nal[2] == 0); // skip the [0]001 delimiter
-	Edge264Frame out;
-	int res = 0;
+// the results of the API as the errno values of the expectations below
+static int to_errno(int res) {
+	switch (res) {
+		case EDGE264MVC_OK: return 0;
+		case EDGE264MVC_AGAIN: return ENOBUFS;
+		case EDGE264MVC_UNSUPPORTED: return ENOTSUP;
+		case EDGE264MVC_CORRUPT: return EBADMSG;
+		case EDGE264MVC_NOMEM: return ENOMEM;
+		case EDGE264MVC_END: return ENODATA;
+		default: return EINVAL;
+	}
+}
+
+static void parse_NALs(const char *name, const uint8_t *buf, const uint8_t *end, void (*post_test)(), const uint8_t *expect) {
+	size_t size = end - buf;
+	Edge264MvcFrame out;
+	int i = 0;
 	count_frames = 0;
-	for (int i = 0; res != ENODATA; i++) {
-		const uint8_t *start_code = edge264_find_start_code(nal, end, 0);
-		res = edge264_decode_NAL(dec, nal, start_code, NULL, NULL);
-		if (res != ENOBUFS)
-			nal = start_code + 3;
+	size_t pos = edge264mvc_find_start_code(buf, size);
+	while (pos < size) {
+		size_t start = pos + 3;
+		size_t next = start + edge264mvc_find_start_code(buf + start, size - start);
+		int res = to_errno(edge264mvc_send_nal(dec, buf + start, next - start, 0, 0));
 		ASSERT(res == expect[i],
 			"%s: NAL at index %d returned %s where %s was expected\n",
 			name, i, ret_to_str(res), ret_to_str(expect[i]));
-		while (!edge264_get_frame(dec, &out, 0))
+		i++;
+		while (edge264mvc_receive_frame(dec, &out) == EDGE264MVC_OK) {
+			edge264mvc_release_frame(dec, &out);
 			count_frames += 1;
+		}
+		if (res != ENOBUFS)
+			pos = next;
 	}
+	// the end of the stream, expected as ENODATA (after any ENOBUFS of the old
+	// drain, which receive_frame now handles internally)
+	while (expect[i] == ENOBUFS)
+		i++;
+	edge264mvc_send_end(dec);
+	int res;
+	while ((res = edge264mvc_receive_frame(dec, &out)) == EDGE264MVC_OK) {
+		edge264mvc_release_frame(dec, &out);
+		count_frames += 1;
+	}
+	ASSERT(to_errno(res) == expect[i],
+		"%s: the end of the stream at index %d returned %s where %s was expected\n",
+		name, i, ret_to_str(to_errno(res)), ret_to_str(expect[i]));
 	if (post_test)
 		post_test();
-	edge264_flush(dec);
+	edge264mvc_flush(dec);
 }
 
 
@@ -126,7 +157,7 @@ static void test_page_boundaries() {
 	rewind(f);
 	PASSERT(fread(page + pagesize - filesize, filesize, 1, f) == 1, NULL);
 	PASSERT(!mprotect(page, pagesize, PROT_READ), NULL);
-	edge264_find_start_code(page, page + filesize, 1);
+	edge264mvc_find_start_code(page, filesize);
 	parse_NALs("page-boundaries", page, page + filesize, NULL, (uint8_t[]){0, ENODATA});
 	parse_NALs("page-boundaries", page + pagesize - filesize, page + pagesize, NULL, (uint8_t[]){0, ENODATA});
 	fclose(f);
@@ -434,7 +465,11 @@ int main(int argc, char *argv[]) {
 	
 	// run all stress tests
 	putchar('\n');
-	dec = edge264_alloc(0, log_callback, NULL, 0, NULL, NULL, NULL);
+	Edge264MvcSettings settings;
+	edge264mvc_default_settings(&settings);
+	settings.n_threads = 1;
+	settings.log_cb = log_callback;
+	PASSERT(edge264mvc_open(&dec, &settings) == EDGE264MVC_OK, "edge264mvc_open");
 	test("supp-nals", NULL, NULL, (uint8_t[]){0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, ENOBUFS, 0, 0, ENODATA});
 	test("unsupp-nals", NULL, NULL, (uint8_t[]){ENOTSUP, ENOTSUP, ENOTSUP, ENOTSUP, ENOTSUP, ENOTSUP, ENOTSUP, ENOTSUP, ENOTSUP, ENOTSUP, ENOTSUP, ENOTSUP, ENOTSUP, ENOTSUP, ENOTSUP, ENOTSUP, ENOTSUP, ENOTSUP, ENOTSUP, ENOTSUP, ENOTSUP, ENODATA});
 	test("supp-nals", NULL, NULL, (uint8_t[]){0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, ENOBUFS, 0, 0, ENODATA});
@@ -450,6 +485,6 @@ int main(int argc, char *argv[]) {
 	printf("\e[A\e[K%d " GREEN "PASS" RESET "\n", count_pass);
 	
 	// clear all open stuff
-	edge264_free(&dec);
+	edge264mvc_close(&dec);
 	return 0;
 }

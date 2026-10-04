@@ -60,9 +60,14 @@
 .DELETE_ON_ERROR:
 
 # ---- Version -----------------------------------------------------------------
-MAJOR   := 1
+MAJOR   := 2
 MINOR   := 0
 VERSION := $(MAJOR).$(MINOR)
+# the version reported by edge264mvc_version(): the release tag when built from git
+GIT_VERSION := $(shell git describe --tags --always --dirty 2>/dev/null)
+ifneq ($(GIT_VERSION),)
+  override CPPFLAGS += -DEDGE264MVC_VERSION_STRING='"$(GIT_VERSION)"'
+endif
 
 # ---- Host OS detection -------------------------------------------------------
 # uname -s returns: Linux, Darwin, MINGW64_NT-*, MSYS_NT-*, CYGWIN_NT-* ...
@@ -145,27 +150,27 @@ OBJNAMES := edge264.o \
 
 # ---- Output filenames per target ---------------------------------------------
 ifeq ($(OS),macos)
-  LIBNAME := libedge264.$(MAJOR).dylib
+  LIBNAME := libedge264mvc.$(MAJOR).dylib
 else ifeq ($(OS),linux)
-  LIBNAME := libedge264.so.$(MAJOR)
+  LIBNAME := libedge264mvc.so.$(MAJOR)
 else ifeq ($(OS),windows)
-  LIBNAME := edge264.$(MAJOR).dll
+  LIBNAME := edge264mvc.$(MAJOR).dll
   EXE := .exe
 else ifeq ($(OS),android)
   # Android does not support versioned .so filenames
-  LIBNAME := libedge264.so
+  LIBNAME := libedge264mvc.so
 else ifeq ($(OS),ios)
   # iOS requires static libraries or signed .xcframework bundles
-  LIBNAME := libedge264.a
+  LIBNAME := libedge264mvc.a
 else ifeq ($(OS),wasm)
   # emcc produces a .js glue file alongside a .wasm binary
-  LIBNAME := edge264.js
+  LIBNAME := edge264mvc.js
   EXE := .js
 endif
 
 # Static builds override the shared library name
 ifeq ($(STATIC),yes)
-  LIBNAME := libedge264.a
+  LIBNAME := libedge264mvc.a
 endif
 
 # ---- Sanitizer flags ---------------------------------------------------------
@@ -185,8 +190,8 @@ ifneq ($(SANITIZE),)
     SANITIZE_FLAGS += -fPIE
   endif
   ifneq (,$(findstring undefined,$(SANITIZE)))
-    # UndefinedBehaviorSanitizer: disable checks for expected compiler behaviors
-    SANITIZE_FLAGS += -fno-sanitize=alignment,shift-base,array-bounds
+    # UndefinedBehaviorSanitizer: every finding fails the run
+    SANITIZE_FLAGS += -fno-sanitize-recover=undefined
   endif
 endif
 
@@ -241,7 +246,7 @@ ifeq ($(OS),macos)
   # -install_name @rpath lets the test binary find the dylib without DYLD_LIBRARY_PATH
   override LIBFLAGS := -shared -dynamiclib -install_name @rpath/$(LIBNAME) $(LDFLAGS) $(LIBFLAGS)
 else ifeq ($(OS),linux)
-  override LIBFLAGS := -shared -Wl,-soname,libedge264.so.$(MAJOR) $(LDFLAGS) $(LIBFLAGS)
+  override LIBFLAGS := -shared -Wl,-soname,libedge264mvc.so.$(MAJOR) $(LDFLAGS) $(LIBFLAGS)
 else ifeq ($(OS),android)
   override LIBFLAGS := -shared $(LDFLAGS) $(LIBFLAGS)
 else ifeq ($(OS),windows)
@@ -315,20 +320,20 @@ $(LIBNAME): $(OBJNAMES)
 endif
 
 # ---- Test executable ---------------------------------------------------------
-edge264_test$(EXE): src/edge264_test.c edge264.h src/edge264_internal.h $(LIBNAME)
+edge264_test$(EXE): src/edge264_test.c edge264mvc.h src/edge264_internal.h $(LIBNAME)
 	$(Q)$(CCLD) src/edge264_test.c $(CPPFLAGS) $(CFLAGS) $(EXEFLAGS) -o $@
 
 # ---- Object files ------------------------------------------------------------
-edge264.o: edge264.h src/*
+edge264.o: edge264mvc.h src/*
 	$(Q)$(CC) src/edge264.c -c $(CPPFLAGS) $(CFLAGS) $(OBJFLAGS) $(RUNTIME_TESTS) -o $@
 
-edge264_headers_v2.o: edge264.h src/*
+edge264_headers_v2.o: edge264mvc.h src/*
 	$(Q)$(CC) src/edge264_headers.c -c $(CPPFLAGS) $(CFLAGS) $(OBJFLAGS) -march=x86-64-v2 "-DADD_VARIANT(f)=f##_v2" -o $@
 
-edge264_headers_v3.o: edge264.h src/*
+edge264_headers_v3.o: edge264mvc.h src/*
 	$(Q)$(CC) src/edge264_headers.c -c $(CPPFLAGS) $(CFLAGS) $(OBJFLAGS) -march=x86-64-v3 "-DADD_VARIANT(f)=f##_v3" -o $@
 
-edge264_headers_log.o: edge264.h src/*
+edge264_headers_log.o: edge264mvc.h src/*
 	$(Q)$(CC) src/edge264_headers.c -c $(CPPFLAGS) $(CFLAGS) $(OBJFLAGS) -DLOGS "-DADD_VARIANT(f)=f##_log" -o $@
 
 
@@ -341,16 +346,16 @@ edge264_headers_log.o: edge264.h src/*
 install: $(LIBNAME)
 	$(Q)install -d $(DESTDIR)$(libdir) $(DESTDIR)$(includedir) $(DESTDIR)$(libdir)/pkgconfig
 	$(Q)install -m 644 $(LIBNAME) $(DESTDIR)$(libdir)/
-	$(Q)install -m 644 edge264.h  $(DESTDIR)$(includedir)/
+	$(Q)install -m 644 edge264mvc.h  $(DESTDIR)$(includedir)/
 ifeq ($(OS),linux)
   ifneq ($(STATIC),yes)
-	$(Q)ln -sf $(LIBNAME) $(DESTDIR)$(libdir)/libedge264.so
+	$(Q)ln -sf $(LIBNAME) $(DESTDIR)$(libdir)/libedge264mvc.so
 	$(Q)ldconfig $(DESTDIR)$(libdir) 2>/dev/null || true
   endif
 endif
 ifeq ($(OS),macos)
   ifneq ($(STATIC),yes)
-	$(Q)ln -sf $(LIBNAME) $(DESTDIR)$(libdir)/libedge264.dylib
+	$(Q)ln -sf $(LIBNAME) $(DESTDIR)$(libdir)/libedge264mvc.dylib
   endif
 endif
 	$(Q)( \
@@ -359,21 +364,21 @@ endif
 	  echo 'libdir=$(libdir)'; \
 	  echo 'includedir=$(includedir)'; \
 	  echo ''; \
-	  echo 'Name: edge264'; \
-	  echo 'Description: H.264 high/mvc video decoder'; \
+	  echo 'Name: edge264mvc'; \
+	  echo 'Description: H.264 and H.264 MVC (3D) video decoder'; \
 	  echo 'Version: $(VERSION)'; \
-	  echo 'Libs: -L$${libdir} -ledge264'; \
+	  echo 'Libs: -L$${libdir} -ledge264mvc'; \
 	  $(if $(_THREAD_FLAG),echo 'Libs.private: $(_THREAD_FLAG)';) \
 	  echo 'Cflags: -I$${includedir}'; \
-	) > $(DESTDIR)$(libdir)/pkgconfig/edge264.pc
+	) > $(DESTDIR)$(libdir)/pkgconfig/edge264mvc.pc
 
 .PHONY: uninstall
 uninstall:
 	$(Q)rm -f $(DESTDIR)$(libdir)/$(LIBNAME) \
-	          $(DESTDIR)$(libdir)/libedge264.so \
-	          $(DESTDIR)$(libdir)/libedge264.dylib \
-	          $(DESTDIR)$(libdir)/pkgconfig/edge264.pc \
-	          $(DESTDIR)$(includedir)/edge264.h
+	          $(DESTDIR)$(libdir)/libedge264mvc.so \
+	          $(DESTDIR)$(libdir)/libedge264mvc.dylib \
+	          $(DESTDIR)$(libdir)/pkgconfig/edge264mvc.pc \
+	          $(DESTDIR)$(includedir)/edge264mvc.h
 
 
 # ==============================================================================
@@ -381,7 +386,7 @@ uninstall:
 # ==============================================================================
 .PHONY: clean clear
 clean clear:
-	$(Q)rm -f edge264_test edge264_test.exe edge264_test.js edge264_test.wasm edge264_check edge264_check.exe edge264_check.js edge264_check.wasm conformance_check conformance_check.exe liveness_check liveness_check.exe asan_check asan_check.exe edge264*.o libedge264.a edge264.$(MAJOR).dll edge264.js edge264.wasm libedge264.$(MAJOR).dylib libedge264-universal.$(MAJOR).dylib libedge264.so libedge264.so.$(MAJOR)
+	$(Q)rm -f edge264_test edge264_test.exe edge264_test.js edge264_test.wasm edge264_check edge264_check.exe edge264_check.js edge264_check.wasm conformance_check conformance_check.exe liveness_check liveness_check.exe asan_check asan_check.exe fuzz_decode edge264*.o libedge264mvc.a edge264mvc.$(MAJOR).dll edge264mvc.js edge264mvc.wasm libedge264mvc.$(MAJOR).dylib libedge264mvc-universal.$(MAJOR).dylib libedge264mvc.so libedge264mvc.so.$(MAJOR)
 
 
 # ==============================================================================
@@ -406,7 +411,7 @@ else
 	$(Q)$(MAKE) --no-print-directory check-edge264-test-liveness
 endif
 
-edge264_check$(EXE): src/edge264_check.c edge264.h src/edge264_internal.h $(LIBNAME)
+edge264_check$(EXE): src/edge264_check.c edge264mvc.h src/edge264_internal.h $(LIBNAME)
 	$(Q)$(CCLD) src/edge264_check.c $(CPPFLAGS) $(CFLAGS) $(EXEFLAGS) -o $@
 
 # Committed decode-regression over the bundled JVT conformance fixtures
@@ -434,7 +439,7 @@ ifneq ($(OS),wasm)
 	$(Q)EDGE264_THREADS=-1 ./conformance_check$(EXE) run tests/conformance/manifest.txt tests/conformance
 endif
 
-conformance_check$(EXE): tests/conformance_check.c edge264.h $(LIBNAME)
+conformance_check$(EXE): tests/conformance_check.c edge264mvc.h $(LIBNAME)
 	$(Q)$(CCLD) -I. tests/conformance_check.c $(CPPFLAGS) $(CFLAGS) $(EXEFLAGS) -o $@
 
 # Committed liveness regression over the bundled damaged-stream fixtures
@@ -449,7 +454,7 @@ ifneq ($(OS),wasm)
 	$(Q)EDGE264_THREADS=-1 ./liveness_check$(EXE) run tests/liveness/manifest.txt tests/liveness
 endif
 
-liveness_check$(EXE): tests/liveness_check.c edge264.h $(LIBNAME)
+liveness_check$(EXE): tests/liveness_check.c edge264mvc.h $(LIBNAME)
 	$(Q)$(CCLD) -I. tests/liveness_check.c $(CPPFLAGS) $(CFLAGS) $(EXEFLAGS) -o $@
 
 # Native edge264_test stream-input regression. Compares regular-file mmap,
@@ -481,8 +486,17 @@ endif
 check-asan: asan_check$(EXE)
 	$(Q)ASAN_OPTIONS=detect_leaks=0:max_allocation_size_mb=2048 timeout 90 ./asan_check$(EXE) run tests/asan/manifest.txt tests/asan
 
-asan_check$(EXE): tests/asan_check.c edge264.h $(LIBNAME)
+asan_check$(EXE): tests/asan_check.c edge264mvc.h $(LIBNAME)
 	$(Q)$(CCLD) -I. tests/asan_check.c $(CPPFLAGS) $(CFLAGS) $(EXEFLAGS) -o $@
+
+# libFuzzer harness under AddressSanitizer and UndefinedBehaviorSanitizer (needs
+# clang), built from the sources so every function is instrumented. Assertions
+# are compiled out like in a release build, so the fuzzer looks for what a
+# release build would do with damaged input.
+.PHONY: fuzz
+fuzz: fuzz_decode$(EXE)
+fuzz_decode$(EXE): tests/fuzz_decode.c edge264mvc.h src/*
+	$(Q)clang -DNDEBUG -fsanitize=fuzzer,address,undefined -fno-sanitize-recover=undefined -O1 -g -std=gnu11 -flax-vector-conversions -Wno-override-init -pthread $(filter -march=%,$(CFLAGS)) -I. -Isrc src/edge264.c tests/fuzz_decode.c -o $@
 
 .PHONY: gentests
 gentests: $(TESTS_264)

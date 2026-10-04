@@ -427,6 +427,7 @@ static unsigned ppow(unsigned p65536, unsigned k) {
  * FIXME remove ldleft macros eventually
 */
 static void recover_slice(Edge264Context *ctx, int currPic, int keep_mb) {
+	__atomic_fetch_or(&ctx->d->frame_flags[currPic], EDGE264MVC_VIEW_CONCEALED, __ATOMIC_RELAXED);
 	// mark all previous mbs as erroneous and assign them an error probability
 	ctx->mby = (unsigned)ctx->t.first_mb_in_slice / (unsigned)ctx->t.pic_width_in_mbs;
 	ctx->mbx = (unsigned)ctx->t.first_mb_in_slice % (unsigned)ctx->t.pic_width_in_mbs;
@@ -1310,6 +1311,7 @@ static void initialize_task(Edge264Decoder *dec, Edge264SeqParameterSet *sps, Ed
 // base view it is concealed from is complete.
 static int conceal_frame(Edge264Decoder *dec, int id) {
 	assert(dec->samples_buffers[id] && dec->mb_buffers[id]);
+	__atomic_fetch_or(&dec->frame_flags[id], EDGE264MVC_VIEW_CONCEALED, __ATOMIC_RELAXED);
 	// A damaged MVC dependent view is best concealed by the base view of its
 	// access unit: the two eyes differ only by disparity, so the viewer sees one
 	// flat frame instead of a green flash, and the pictures predicted from it
@@ -1802,6 +1804,9 @@ int ADD_VARIANT(parse_slice_layer_without_partitioning)(Edge264Decoder *dec, Edg
 			(ret = alloc_frame(dec, currPic, currPic <= sps->max_dec_frame_buffering ? ENOMEM : ENOBUFS)))
 			return ret;
 		dec->currPic = currPic;
+		dec->frame_flags[currPic] = dec->IdrPicFlag ? EDGE264MVC_VIEW_IDR : 0;
+		dec->frame_pts[currPic] = dec->in_pts;
+		dec->frame_user_data[currPic] = dec->in_user_data;
 		dec->non_base_frames = dec->non_base_frames & ~(1u << currPic) | (unsigned)non_base_view << currPic;
 		dec->frame_flip_bits ^= 1u << currPic;
 		dec->FrameIds[currPic] = ++dec->prevFrameId;
@@ -2641,6 +2646,10 @@ int ADD_VARIANT(parse_seq_parameter_set)(Edge264Decoder *dec, Edge264UnrefCb unr
 	if (!sps.frame_mbs_only_flag)
 		ret = ENOTSUP;
 	sps.pic_height_in_mbs = pic_height_in_map_units << 1 >> sps.frame_mbs_only_flag;
+	// frames larger than max_frame_pixels (by default the largest any level
+	// allows) are not decoded, which also bounds the memory a crafted SPS takes
+	if (sps.pic_width_in_mbs * sps.pic_height_in_mbs > dec->max_frame_mbs)
+		ret = ENOTSUP;
 	int mvc = (dec->nal_unit_type == 15);
 	// contrary to H.10.2.1-f we force MaxDpbFrames a multiple of 2 for MVC
 	int MaxDpbFrames = min((MaxDpbMbs[min(level_idc, 63)] / (unsigned)(sps.pic_width_in_mbs * sps.pic_height_in_mbs)) << mvc, 16);

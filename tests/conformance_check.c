@@ -31,7 +31,7 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
-#include "edge264.h"
+#include "edge264mvc.h"
 
 #define RED "\e[0;31m"
 #define GREEN "\e[0;32m"
@@ -62,7 +62,7 @@ static void hash_plane(Hash *h, const uint8_t *p, int w, int ht, int stride, int
 		hash_bytes(h, p + (size_t)y * stride, row);
 }
 
-static void hash_view(Hash *h, const uint8_t *const planes[3], const Edge264Frame *f) {
+static void hash_view(Hash *h, const uint8_t *const planes[3], const Edge264MvcFrame *f) {
 	int by = f->bit_depth_Y > 8 ? 2 : 1;
 	int bc = f->bit_depth_C > 8 ? 2 : 1;
 	hash_plane(h, planes[0], f->width_Y, f->height_Y, f->stride_Y, by);
@@ -82,11 +82,11 @@ typedef struct {
 } Result;
 
 // Fold one delivered frame into the running hashes and structural counters.
-static void account_frame(Result *r, const Edge264Frame *f, int64_t *prev_disp) {
-	int is_stereo = f->samples_mvc[0] != NULL;
+static void account_frame(Result *r, const Edge264MvcFrame *f, int64_t *prev_disp) {
+	int is_stereo = f->views[1].planes[0] != NULL;
 	if (is_stereo) {
 		r->stereo = 1;
-		if (f->Poc != f->Poc_mvc)
+		if (f->views[0].poc != f->views[1].poc)
 			r->pair_err++;
 	} else {
 		r->mono++;
@@ -96,49 +96,57 @@ static void account_frame(Result *r, const Edge264Frame *f, int64_t *prev_disp) 
 	// Blu-ray) mislabels a pair, so it is an error too. 2D DisplayPoc may
 	// legitimately dip across IDR/sequence boundaries and is flagged only on a
 	// strict decrease (the verdict below consults order_err only for stereo).
-	if (is_stereo ? f->DisplayPoc <= *prev_disp : f->DisplayPoc < *prev_disp)
+	if (is_stereo ? f->views[0].display_order <= *prev_disp : f->views[0].display_order < *prev_disp)
 		r->order_err++;
-	*prev_disp = f->DisplayPoc;
-	hash_view(&r->base, f->samples, f);
+	*prev_disp = f->views[0].display_order;
+	hash_view(&r->base, f->views[0].planes, f);
 	if (is_stereo)
-		hash_view(&r->dep, f->samples_mvc, f);
+		hash_view(&r->dep, f->views[1].planes, f);
 	r->frames++;
 }
 
 // Decode the whole bitstream in `buf`, accumulating the per-view hashes
 // and the structural counters. Mirrors the documented decode protocol:
-// find_start_code -> decode_NAL, draining get_frame between calls, with
-// ENOTSUP skipped (unspecified NAL types are not fatal) and ENOBUFS
-// meaning "drain then retry the same NAL".
-// `paced` selects the consumer model. 0 = aggressive: drain every available
-// frame after each NAL (the easy case, no DPB pressure). 1 = paced: drain only
-// when the decoder reports the DPB full (ENOBUFS), and then a single frame, so
-// the DPB stays under pressure into each mid-stream IDR - the condition a real
-// player (e.g. one frame consumed per vsync) creates and under which the MVC
-// view-pairing shortcut used to drop the IDR's dependent view. Both models must
-// yield identical output from a correct decoder.
+// find_start_code -> send_nal, receiving frames between calls, with
+// EDGE264MVC_UNSUPPORTED skipped (unspecified NAL types are not fatal) and
+// EDGE264MVC_AGAIN meaning "receive then send the same NAL again".
+// `paced` selects the consumer model. 0 = aggressive: receive every available
+// frame after each NAL (the easy case, no DPB pressure). 1 = paced: receive
+// only when the decoder reports the DPB full (EDGE264MVC_AGAIN), and then a
+// single frame, so the DPB stays under pressure into each mid-stream IDR - the
+// condition a real player (e.g. one frame consumed per vsync) creates and under
+// which the MVC view-pairing shortcut used to drop the IDR's dependent view.
+// Both models must yield identical output from a correct decoder.
 static Result decode_all(const uint8_t *buf, size_t size, int paced) {
 	Result r = {0};
 	r.base = HASH_INIT;
 	r.dep = HASH_INIT;
 	int64_t prev_disp = INT64_MIN;
 	// Diagnostic hook: EDGE264_THREADS lets this bit-exact oracle run the same
-	// hash comparison under multithreading (default 0 = single-thread).
+	// hash comparison under multithreading (default 0 = single-thread, <0 = auto).
 	const char *nt = getenv("EDGE264_THREADS");
-	Edge264Decoder *dec = edge264_alloc(nt ? atoi(nt) : 0, NULL, NULL, 0, NULL, NULL, NULL);
-	const uint8_t *nal = buf + 3 + (size > 2 && buf[2] == 0);
-	const uint8_t *end = buf + size;
+	int threads = nt ? atoi(nt) : 0;
+	Edge264MvcSettings settings;
+	edge264mvc_default_settings(&settings);
+	settings.n_threads = threads < 0 ? 0 : threads == 0 ? 1 : threads;
+	Edge264MvcDecoder *dec;
+	if (edge264mvc_open(&dec, &settings) != EDGE264MVC_OK) {
+		r.decode_err++;
+		return r;
+	}
+	Edge264MvcFrame f;
 	long no_progress = 0;
-	int res;
-	do {
-		const uint8_t *sc = edge264_find_start_code(nal, end, 0);
-		res = edge264_decode_NAL(dec, nal, sc, NULL, NULL);
-		Edge264Frame f;
+	size_t pos = edge264mvc_find_start_code(buf, size);
+	while (pos < size) {
+		size_t start = pos + 3;
+		size_t next = start + edge264mvc_find_start_code(buf + start, size - start);
+		int res = edge264mvc_send_nal(dec, buf + start, next - start, 0, 0);
 		if (paced) {
-			// Drain one frame only when the DPB is full, then re-feed the same NAL.
-			if (res == ENOBUFS) {
-				if (edge264_get_frame(dec, &f, 0) == 0) {
+			// Receive one frame only when the DPB is full, then send the same NAL again.
+			if (res == EDGE264MVC_AGAIN) {
+				if (edge264mvc_receive_frame(dec, &f) == EDGE264MVC_OK) {
 					account_frame(&r, &f, &prev_disp);
+					edge264mvc_release_frame(dec, &f);
 					no_progress = 0;
 				} else if (++no_progress >= 4096) { // regressed decoder: stall, not hang
 					r.decode_err++;
@@ -146,20 +154,28 @@ static Result decode_all(const uint8_t *buf, size_t size, int paced) {
 				}
 			}
 		} else {
-			while (edge264_get_frame(dec, &f, 0) == 0)
+			while (edge264mvc_receive_frame(dec, &f) == EDGE264MVC_OK) {
 				account_frame(&r, &f, &prev_disp);
+				edge264mvc_release_frame(dec, &f);
+			}
 		}
-		if (res != ENOBUFS)
-			nal = sc + 3;
-		if (res != 0 && res != ENOBUFS && res != ENOTSUP && res != ENODATA)
+		if (res == EDGE264MVC_AGAIN)
+			continue;
+		if (res != EDGE264MVC_OK && res != EDGE264MVC_UNSUPPORTED) {
 			r.decode_err++;
-	} while (res == 0 || res == ENOBUFS || res == ENOTSUP);
-	// End-of-stream: decode_NAL set `flushing` and bumped the held frames; drain
-	// whatever the paced loop left buffered (a no-op for the aggressive model).
-	Edge264Frame f;
-	while (edge264_get_frame(dec, &f, 0) == 0)
+			break;
+		}
+		pos = next;
+	}
+	// End of stream (only when no NAL failed, as the decode then stops there):
+	// receive whatever the paced loop left buffered.
+	if (pos >= size)
+		edge264mvc_send_end(dec);
+	while (edge264mvc_receive_frame(dec, &f) == EDGE264MVC_OK) {
 		account_frame(&r, &f, &prev_disp);
-	edge264_free(&dec);
+		edge264mvc_release_frame(dec, &f);
+	}
+	edge264mvc_close(&dec);
 	return r;
 }
 

@@ -85,9 +85,9 @@ make CFLAGS="-march=x86-64" VARIANTS=x86-64-v2,x86-64-v3 BUILDTEST=no
 
 ### CMake integration
 
-edge264 ships a `CMakeLists.txt` that wraps its Makefile, so you can
+edge264-mvc ships a `CMakeLists.txt` that wraps its Makefile, so you can
 integrate it into a CMake project without writing any custom build logic.
-It exposes a single imported target `edge264::edge264` for use with
+It exposes a single imported target `edge264mvc::edge264mvc` for use with
 `target_link_libraries`.
 
 ```cmake
@@ -95,14 +95,14 @@ cmake_minimum_required(VERSION 3.14)
 project(my_app C)
 
 include(FetchContent)
-FetchContent_Declare(edge264
+FetchContent_Declare(edge264mvc
   GIT_REPOSITORY https://github.com/jens-duttke/edge264-mvc.git
-  GIT_TAG        v2026.06.27  # always pin to a tag or commit hash
+  GIT_TAG        <tag>  # always pin to a tag or commit hash
 )
-FetchContent_MakeAvailable(edge264)
+FetchContent_MakeAvailable(edge264mvc)
 
 add_executable(my_app main.c)
-target_link_libraries(my_app PRIVATE edge264::edge264)
+target_link_libraries(my_app PRIVATE edge264mvc::edge264mvc)
 ```
 
 
@@ -129,48 +129,54 @@ ffmpeg -i vid.mp4 -vcodec copy -bsf h264_mp4toannexb -an vid.264 # optional, con
 ./edge264_test movie.264 -O | ffmpeg -i - -c:v libx264 -crf 18 -x264opts frame-packing=3 out_sbs3d.mp4
 ```
 
-Real 3D Blu-rays carry per-access-unit unspecified NALs (type 24) that return `ENOTSUP`; add `-k` so the decode runs to the end instead of stopping at the first one (`-ok` / `-Ok`). The frame rate is taken from the stream's VUI and can be overridden downstream (`ffmpeg -r ...`).
+Real 3D Blu-rays carry per-access-unit unspecified NALs (type 24) that the decoder reports as unsupported; add `-k` so the decode runs to the end instead of stopping at the first one (`-ok` / `-Ok`). The frame rate is taken from the stream's VUI and can be overridden downstream (`ffmpeg -r ...`).
 
 The input path can also be `-` to read an Annex B stream from standard input, so a demuxer can pipe straight into the decoder without a temporary file (`demux ... | edge264_test - -O | ffmpeg -i - ...`); on POSIX a named pipe (FIFO) path works the same way. Stream input is buffered one NAL unit at a time (capped at 64 MiB), while regular files stay on the memory-mapped fast path.
 
-Here is a complete example that opens an input file in Annex B byte stream format from the command line, and dumps its decoded frames in planar YUV order to standard output. See [edge264_test.c](src/edge264_test.c) for a more complete example which can also display frames.
+Here is a complete example that opens an input file in Annex B byte stream format from the command line, and writes its decoded frames (base view) in planar YUV order to standard output. See [edge264_test.c](src/edge264_test.c) for a more complete example which can also display frames.
 
 ```c
 #include <fcntl.h>
 #include <unistd.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
-#include <sys/types.h>
 
-#include "edge264.h"
+#include "edge264mvc.h"
+
+static void write_frames(Edge264MvcDecoder *dec) {
+	Edge264MvcFrame frm;
+	while (edge264mvc_receive_frame(dec, &frm) == EDGE264MVC_OK) {
+		for (int y = 0; y < frm.height_Y; y++)
+			write(1, frm.views[0].planes[0] + y * frm.stride_Y, frm.width_Y);
+		for (int p = 1; p < 3; p++)
+			for (int y = 0; y < frm.height_C; y++)
+				write(1, frm.views[0].planes[p] + y * frm.stride_C, frm.width_C);
+		edge264mvc_release_frame(dec, &frm);
+	}
+}
 
 int main(int argc, char *argv[]) {
 	int fd = open(argv[1], O_RDONLY);
 	struct stat st;
 	fstat(fd, &st);
-	uint8_t *buf = mmap(NULL, st.st_size, PROT_READ, MAP_SHARED, fd, 0);
-	const uint8_t *nal = buf + 3 + (buf[2] == 0); // skip the [0]001 delimiter
-	const uint8_t *end = buf + st.st_size;
-	// auto threads, no logs, auto allocs
-	Edge264Decoder *dec = edge264_alloc(-1, NULL, NULL, 0, NULL, NULL, NULL);
-	Edge264Frame frm;
-	int res;
-	do {
-		const uint8_t *start_code = edge264_find_start_code(nal, end, 0);
-		res = edge264_decode_NAL(dec, nal, start_code, NULL, NULL);
-		while (!edge264_get_frame(dec, &frm, 0)) {
-			for (int y = 0; y < frm.height_Y; y++)
-				write(1, frm.samples[0] + y * frm.stride_Y, frm.width_Y);
-			for (int y = 0; y < frm.height_C; y++)
-				write(1, frm.samples[1] + y * frm.stride_C, frm.width_C);
-			for (int y = 0; y < frm.height_C; y++)
-				write(1, frm.samples[2] + y * frm.stride_C, frm.width_C);
-		}
-		if (res != ENOBUFS)
-			nal = start_code + 3;
-	} while (res == 0 || res == ENOBUFS);
-	edge264_free(&dec);
-	munmap(buf, st.st_size);
+	const uint8_t *buf = mmap(NULL, st.st_size, PROT_READ, MAP_SHARED, fd, 0);
+	size_t size = st.st_size;
+	Edge264MvcDecoder *dec;
+	edge264mvc_open(&dec, NULL); // default settings: one thread per CPU, no trace
+	size_t pos = edge264mvc_find_start_code(buf, size);
+	while (pos < size) {
+		size_t start = pos + 3; // skip the 00 00 01 start code
+		size_t next = start + edge264mvc_find_start_code(buf + start, size - start);
+		// AGAIN means: receive the ready frames, then send the same NAL again
+		while (edge264mvc_send_nal(dec, buf + start, next - start, 0, 0) == EDGE264MVC_AGAIN)
+			write_frames(dec);
+		write_frames(dec);
+		pos = next;
+	}
+	edge264mvc_send_end(dec);
+	write_frames(dec);
+	edge264mvc_close(&dec);
+	munmap((void *)buf, size);
 	close(fd);
 	return 0;
 }
@@ -179,98 +185,85 @@ int main(int argc, char *argv[]) {
 
 ## API reference
 
-<code>const uint8_t * <b>edge264_find_start_code</b>(buf, end, four_byte)</code>
+The whole API is declared in [edge264mvc.h](edge264mvc.h), and the library is called `edge264mvc` (`libedge264mvc.so.2`, `edge264mvc.2.dll`). Every function returns one of these results, which have the same values on every platform:
 
-> Return a pointer to the next three or four byte (0)001 start code prefix, or `end` if not found.
-> * `const uint8_t * buf` - first byte of buffer to search into
-> * `const uint8_t * end` - first invalid byte past the buffer that stops the search
-> * `int four_byte` - if 0 seek a 001 prefix, otherwise seek a 0001
+| Result | Meaning |
+|---|---|
+| `EDGE264MVC_OK` (0) | success |
+| `EDGE264MVC_AGAIN` (-1) | `send_nal`: the decoder is full - receive the ready frames, then send the same NAL again (every such round makes progress: a frame comes out, or a picture that can never be output, such as an MVC dependent view whose base view is missing, is dropped). `receive_frame`: no frame is ready, send more NALs. |
+| `EDGE264MVC_END` (-2) | `receive_frame`: every frame was returned after `send_end` |
+| `EDGE264MVC_UNSUPPORTED` (-3) | the NAL uses a type or feature the decoder does not support (e.g. the unspecified NAL types 0 and 24-31 of some 3D Blu-rays, interlaced coding, or a frame larger than `max_frame_pixels`); it was skipped, send the next one |
+| `EDGE264MVC_CORRUPT` (-4) | the NAL is damaged; it was skipped and the pictures it belonged to are concealed, send the next one |
+| `EDGE264MVC_NOMEM` (-5) | memory allocation failed; the NAL may be sent again |
+| `EDGE264MVC_INVALID` (-6) | an argument is invalid |
 
-<code>Edge264Decoder * <b>edge264_alloc</b>(n_threads, log_cb, log_arg, log_mbs, alloc_cb, free_cb, alloc_arg)</code>
+<code>uint32_t <b>edge264mvc_api_version</b>(void)</code> and <code>const char * <b>edge264mvc_version</b>(void)</code>
 
-> Allocate and initialize a decoding context.
-> * `int n_threads` - number of background worker threads, with 0 to disable multithreading and -1 to detect the number of logical cores at runtime
-> * `void (* log_cb)(const char * str, void * log_arg)` - if not NULL, a `fputs`-compatible function pointer that `edge264_decode_NAL` will call to log every header, SEI or macroblock, requiring the `logs` variant (otherwise it fails at runtime), and called from the same thread except for macroblocks in multithreaded decoding
-> * `void * log_arg` - custom value passed to `log_cb`
-> * `int log_mbs` - set to 1 to enable the logging of macroblocks
-> * `void (* alloc_cb)(void ** samples, unsigned samples_size, void ** mbs, unsigned mbs_size, int errno_on_fail, void * alloc_arg)` - if not NULL, a function pointer that `edge264_decode_NAL` will call (on the same thread) instead of malloc to request allocation of samples and macroblock buffers for a frame (`errno_on_fail` is ENOMEM for mandatory allocations, or ENOBUFS for allocations that may be skipped to save memory but reduce playback smoothness)
-> * `void (* free_cb)(void * samples, void * mbs, void * alloc_arg)` - if not NULL, a function pointer that `edge264_decode_NAL` and `edge264_free` will call (on the same thread) to free buffers allocated through `alloc_cb`
-> * `void * alloc_arg` - custom value passed to `alloc_cb` and `free_cb`
+> The API version of the loaded library, as `major << 16 | minor << 8 | patch` (compare with `EDGE264MVC_API_VERSION` from the header), and its release as text.
 
-<code>int <b>edge264_decode_NAL</b>(dec, buf, end, free_cb, free_arg)</code>
+<code>void <b>edge264mvc_default_settings</b>(settings)</code>
 
-> Decode a single NAL unit of any type.
-> * `Edge264Decoder * dec` - initialized decoding context
-> * `const uint8_t * buf` - first byte of NAL unit (containing `nal_unit_type`)
-> * `const uint8_t * end` - first byte past the buffer
-> * `void (* free_cb)(void * free_arg, int ret)` - function that may be called from another thread to signal the end of parsing and release the NAL buffer (only when returning `0`)
-> * `void * free_arg` - custom value that will be passed to `free_cb`
-> Passing `buf >= end` will make all buffered frames ready for output with `edge264_get_frame`.
+> Fill an `Edge264MvcSettings` with the defaults. Always call it before changing a field, so that a field added later keeps its default.
+> * `int32_t n_threads` - 0 (default): one worker thread per logical CPU available to the process; 1: decode synchronously inside `send_nal`, on the calling thread; N > 1: N worker threads (at most 16 are used)
+> * `int32_t max_frame_pixels` - frames larger than this (in luma pixels) are reported as unsupported; 0 (default): 8192x4352, the largest frame any level of H.264 allows
+> * `void (* log_cb)(const char * line, void * log_arg)` - if not NULL, receives a YAML trace of every header (and macroblock with `log_mbs`), possibly from worker threads; requires the `logs` build variant
+> * `void * log_arg` - passed to `log_cb`
+> * `int32_t log_mbs` - 1 to include every macroblock in the trace
 
-> Return codes:
-> * `0` - success
-> * `ENOBUFS` - more frames should be consumed with `edge264_get_frame` before calling the function again with the same NAL
-> * `ENOTSUP` - unsupported stream (decoding may proceed but could return zero frames)
-> * `EBADMSG` - invalid stream (decoding may proceed but could show visual artefacts, if you can check with another decoder that the stream is actually flawless, please consider filling a bug report 🙏)
-> * `EINVAL` - the function was called with `dec == NULL` or `buf == NULL`
-> * `ENODATA` - the function was called with `buf >= end` and there are no frames left to output
-> * `ENOMEM` - `malloc` failed to allocate memory
+<code>int <b>edge264mvc_open</b>(decoder, settings)</code>
 
-<code>int <b>edge264_get_frame</b>(dec, out, borrow)</code>
+> Allocate a decoder with the given settings (NULL for the defaults) into `*decoder`. Returns `EDGE264MVC_OK`, `EDGE264MVC_NOMEM` or `EDGE264MVC_INVALID`.
 
-> Fetch the next frame ready for output.
-> * `Edge264Decoder * dec` - initialized decoding context
-> * `Edge264Frame *out` - a structure that will be filled with data for the frame returned
-> * `int borrow` - if 0 the frame may be accessed until the next call to `edge264_decode_NAL`, otherwise the frame should be explicitly returned with `edge264_return_frame`. Note that access is not exclusive, it may be used concurrently as reference for other frames.
+<code>int <b>edge264mvc_send_nal</b>(decoder, nal, size, pts, user_data)</code>
 
-> Return codes are:
-> * `0` on success (one frame is returned)
-> * `EINVAL` if the function was called with `dec == NULL` or `out == NULL`
-> * `ENOMSG` if there is no frame to output at the moment
+> Send one NAL unit, without its 00 00 01 start code. The bytes are copied (or decoded) before the function returns, so the buffer can be reused at once. `pts` and `user_data` are passed through to the views of the picture this NAL starts, so a player keeps its timestamps attached to its frames. Returns `EDGE264MVC_OK`, `EDGE264MVC_AGAIN`, `EDGE264MVC_UNSUPPORTED`, `EDGE264MVC_CORRUPT`, `EDGE264MVC_NOMEM` or `EDGE264MVC_INVALID`.
 
+<code>int <b>edge264mvc_send_end</b>(decoder)</code>
+
+> Signal the end of the stream: `receive_frame` then returns every frame still held, and `EDGE264MVC_END` afterwards. Sending a NAL afterwards starts a new stream.
+
+<code>int <b>edge264mvc_receive_frame</b>(decoder, frame)</code>
+
+> Return the next frame in display order. After `send_nal` returned `EDGE264MVC_AGAIN`, or after `send_end`, it waits for the worker threads to finish the frames that are due instead of returning `EDGE264MVC_AGAIN` at once. For MVC streams a frame carries both views of one access unit, paired by picture order count.
+>
 > ```c
-> typedef struct Edge264Frame {
-> 	const uint8_t *samples[3]; // Y/Cb/Cr planes
-> 	const uint8_t *samples_mvc[3]; // second view
-> 	const uint8_t *mb_errors; // reserved for a per-macroblock error-concealment plane; NOT YET IMPLEMENTED - always NULL on every frame
-> 	int8_t bit_depth_Y; // 8
-> 	int8_t bit_depth_C;
-> 	int16_t width_Y;
-> 	int16_t width_C;
-> 	int16_t height_Y;
-> 	int16_t height_C;
-> 	int16_t stride_Y;
-> 	int16_t stride_C;
-> 	int16_t stride_mb;
-> 	int32_t FrameId;
-> 	int32_t FrameId_mvc; // second view
-> 	int32_t Poc;
-> 	int32_t Poc_mvc; // second view
-> 	int64_t DisplayPoc;
-> 	int64_t DisplayPoc_mvc; // second view
-> 	int16_t frame_crop_offsets[4]; // {top,right,bottom,left}, useful to derive the original frame with 16x16 macroblocks
-> 	void *return_arg;
-> } Edge264Frame;
+> typedef struct Edge264MvcView {
+> 	const uint8_t *planes[3]; // Y, Cb, Cr, already cropped; NULL in a frame without this view
+> 	int64_t pts; // values given to send_nal with the first NAL of this picture
+> 	int64_t user_data;
+> 	int64_t display_order; // strictly increasing in output order, per view
+> 	int32_t poc; // picture order count as coded, reset by every IDR
+> 	int32_t decode_order; // increasing in decoding order, per decoder
+> 	uint32_t flags; // EDGE264MVC_VIEW_CONCEALED (part of the picture was missing or damaged and was concealed), EDGE264MVC_VIEW_IDR
+> 	uint32_t reserved;
+> } Edge264MvcView;
+>
+> typedef struct Edge264MvcFrame {
+> 	Edge264MvcView views[2]; // [0]: base view, [1]: dependent view (MVC)
+> 	int32_t width_Y, height_Y, width_C, height_C; // after cropping
+> 	int32_t stride_Y, stride_C; // in bytes, between rows of a plane
+> 	int32_t bit_depth_Y, bit_depth_C;
+> 	int32_t crop[4]; // pixels removed from the coded picture {top, right, bottom, left}
+> 	void *handle; // internal
+> 	uint8_t reserved[32];
+> } Edge264MvcFrame;
 > ```
 
-> [!NOTE]
-> The four `Poc` / `DisplayPoc` fields are edge264-mvc's addition to the original edge264 API: `Poc` / `Poc_mvc` are the per-view picture order counts, and `DisplayPoc` / `DisplayPoc_mvc` their stream-monotonic unwrapped values. MVC frames are returned POC-paired (`samples` + `samples_mvc`), in display order.
+<code>void <b>edge264mvc_release_frame</b>(decoder, frame)</code>
 
-<code>void <b>edge264_return_frame</b>(dec, return_arg)</code>
+> Give a received frame back to the decoder, which may then reuse its memory. Every received frame must be released, and frames held by the caller limit how far the decoder can run ahead.
 
-> Give back ownership of the frame if it was borrowed from a previous call to `edge264_get_frame`.
-> * `Edge264Decoder * dec` - initialized decoding context
-> * `void * return_arg` - the value stored inside the frame to return
+<code>void <b>edge264mvc_flush</b>(decoder)</code>
 
-<code>void <b>edge264_flush</b>(dec)</code>
+> Discard every picture and the decoding state, e.g. to seek. Decoding resumes at the next IDR picture or recovery point. Frames already received stay valid until released.
 
-> For use when seeking, stop all background processing, flush all delayed frames while keeping them allocated, and clear the internal decoder state.
-> * `Edge264Decoder * dec` - initialized decoding context
+<code>void <b>edge264mvc_close</b>(decoder)</code>
 
-<code>void <b>edge264_free</b>(pdec)</code>
+> Stop the worker threads, free the decoder including the frames not released yet, and set `*decoder` to NULL. Accepts NULL.
 
-> Deallocate the entire decoding context, and unset the pointer.
-> * `Edge264Decoder ** pdec` - pointer to a decoding context, initialized or not
+<code>size_t <b>edge264mvc_find_start_code</b>(buf, size)</code>
+
+> Return the offset of the first 00 00 01 start code in `buf[0..size)`, or `size` if there is none. Reads only inside the buffer.
 
 
 ## Validation and tests
@@ -367,7 +360,7 @@ edge264-mvc's own tests - MVC conformance, real-world decode robustness, memory 
 | qpprime_y_zero_transform_bypass_flag=1 |  |  |
 | All scaling lists default/fallback rules and repeated values for all indices, with residual macroblock |  |  |
 | log2_max_frame_num=4 and a frame referencing another with the same frame_num%4 |  |  |
-| Every unsupported feature should return ENOTSUP and make a log containing a `# unsupported` line |  |  |
+| Every unsupported feature should be reported as `EDGE264MVC_UNSUPPORTED` and make a log containing a `# unsupported` line |  |  |
 
 | CAVLC tests | Expected | Test files |
 | --- | --- | --- |
@@ -452,7 +445,7 @@ edge264 was created to experiment with programming techniques that improve perfo
 
 edge264-mvc is a standalone decoder derived from [tvlabs/edge264](https://github.com/tvlabs/edge264) by Thibault Raffaillac, which grew up as a research effort on new software engineering practices (most notably C vector extensions in place of hand-crafted assembly). `main` adds the fixes and speed-ups below on top of the edge264 codebase; each fix also lives on its own `fix/*`, `pick/*` or `port/*` branch, each speed-up on its own `perf/*` branch, and cherry-picked PRs keep their original authorship.
 
-Multithreaded decoding is the headline addition. Call `edge264_alloc` with `n_threads = -1` to auto-detect cores (the default in `edge264_test`) or a positive thread count, or `n_threads = 0` for the single-threaded path. Stock edge264's experimental multi-thread path was broken (pre-existing, reproducible on pristine edge264 even for non-MVC streams - a teardown deadlock, out-of-order output, an MVC stereo-pairing stall and data races); edge264-mvc makes multithreaded output **bit-exact to single-thread on every supported stream of the 231-stream JVT corpus**, hang-free under heavy thread oversubscription, and ThreadSanitizer-clean. It also keeps PR #25's single-threaded decode-hang fix ([PR #25](https://github.com/tvlabs/edge264/pull/25) · @intrepidsilence, `ready_tasks == 0`). The API is the original edge264's plus four POC fields on `Edge264Frame` (`Poc`, `Poc_mvc`, `DisplayPoc`, `DisplayPoc_mvc`).
+Multithreaded decoding is the headline addition. By default `edge264mvc_open` starts one worker thread per logical CPU available to the process; `n_threads = 1` in the settings decodes on the calling thread instead. Stock edge264's experimental multi-thread path was broken (pre-existing, reproducible on pristine edge264 even for non-MVC streams - a teardown deadlock, out-of-order output, an MVC stereo-pairing stall and data races); edge264-mvc makes multithreaded output **bit-exact to single-thread on every supported stream of the 231-stream JVT corpus**, hang-free under heavy thread oversubscription, and ThreadSanitizer-clean. It also keeps PR #25's single-threaded decode-hang fix ([PR #25](https://github.com/tvlabs/edge264/pull/25) · @intrepidsilence, `ready_tasks == 0`). Since version 2 the library has its own API, `edge264mvc` (see the API reference above): the original edge264 API returned platform-dependent `errno` values, passed no timestamps through, never reported concealed pictures and shared the original's library name with a different frame layout.
 
 Worker threads decode consecutive pictures at the same time, the way FFmpeg's frame threading does: a picture starts as soon as the pictures it predicts from have started, and waits row by row until the reference rows it reads are decoded and deblocked. Slices of one picture are decoded in parallel too, and deblocked in order with their own parameters. Damaged pictures are concealed only where nothing was published yet, so the output stays the same whatever the number of threads. On a 1080p High Profile stream with 16 threads this is about 3x faster than the original scheduler, which only started a picture once its references were complete.
 
@@ -584,7 +577,7 @@ Worker threads decode consecutive pictures at the same time, the way FFmpeg's fr
   wrongly changed the *SPS* flat-16 default, whereas the fix above corrects which
   fall-back rule set (A vs B) applies when a *PPS* declares its own scaling matrix.
 - Unspecified NAL types (0, 24-31) - including the type-24 units some 3D Blu-rays carry
-  ([issue #20](https://github.com/tvlabs/edge264/issues/20)) - return `ENOTSUP` by design,
+  ([issue #20](https://github.com/tvlabs/edge264/issues/20)) - are reported as unsupported (`EDGE264MVC_UNSUPPORTED`) by design,
   matching stock edge264's tested contract. Skip them in your decode loop rather than treating them
   as fatal (a caller-side concern, not a library change).
 

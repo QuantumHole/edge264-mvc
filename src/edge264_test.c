@@ -148,7 +148,47 @@ static FILE *msg; // human-readable output: stdout normally, stderr while dumpin
 static const char *moveup = "";
 FILE *trace_file = NULL;
 static Edge264Decoder *d;
-static Edge264Frame out;
+static void trace_line(const char *line, void *file) { fputs(line, file); }
+static Edge264MvcFrame out;
+static int holding_out; // out was received and is not released yet
+
+// A received frame stays valid until the next call into the decoder.
+static void release_out(void) {
+	if (holding_out) {
+		edge264mvc_release_frame(d, &out);
+		holding_out = 0;
+	}
+}
+
+// The decoder results as the errno values this tool reports with.
+static int to_errno(int res) {
+	switch (res) {
+		case EDGE264MVC_OK: return 0;
+		case EDGE264MVC_AGAIN: return ENOBUFS;
+		case EDGE264MVC_END: return ENODATA;
+		case EDGE264MVC_UNSUPPORTED: return ENOTSUP;
+		case EDGE264MVC_CORRUPT: return EBADMSG;
+		case EDGE264MVC_NOMEM: return ENOMEM;
+		default: return EINVAL;
+	}
+}
+
+// Sends one NAL, or the end of the stream for an empty one.
+static int send_nal(const uint8_t *nal, const uint8_t *end) {
+	release_out();
+	if (nal >= end) {
+		edge264mvc_send_end(d);
+		return ENODATA;
+	}
+	return to_errno(edge264mvc_send_nal(d, nal, end - nal, 0, 0));
+}
+
+static int receive_frame(void) {
+	release_out();
+	int res = edge264mvc_receive_frame(d, &out);
+	holding_out = res == EDGE264MVC_OK;
+	return to_errno(res);
+}
 static const uint8_t *conf[2];
 static SDL_Window *window;
 static SDL_Renderer *renderer;
@@ -169,7 +209,7 @@ static int cmp(const struct dirent **a, const struct dirent **b) {
 static int draw_frame()
 {
 	// create or resize the window if necessary
-	int has_second_view = out.samples_mvc[0] != NULL;
+	int has_second_view = out.views[1].planes[0] != NULL;
 	if (width != out.width_Y || height != out.height_Y || mvc_display != has_second_view) {
 		width = out.width_Y;
 		height = out.height_Y;
@@ -191,11 +231,11 @@ static int draw_frame()
 	}
 	
 	// upload the image to a texture and render!
-	SDL_UpdateYUVTexture(texture0, NULL, out.samples[0], out.stride_Y, out.samples[1], out.stride_C, out.samples[2], out.stride_C);
+	SDL_UpdateYUVTexture(texture0, NULL, out.views[0].planes[0], out.stride_Y, out.views[0].planes[1], out.stride_C, out.views[0].planes[2], out.stride_C);
 	SDL_RenderClear(renderer);
 	SDL_RenderCopy(renderer, texture0, NULL, NULL);
 	if (mvc_display) {
-		SDL_UpdateYUVTexture(texture1, NULL, out.samples_mvc[0], out.stride_Y, out.samples_mvc[1], out.stride_C, out.samples_mvc[2], out.stride_C);
+		SDL_UpdateYUVTexture(texture1, NULL, out.views[1].planes[0], out.stride_Y, out.views[1].planes[1], out.stride_C, out.views[1].planes[2], out.stride_C);
 		SDL_RenderCopy(renderer, texture1, NULL, NULL);
 	}
 	SDL_RenderPresent(renderer);
@@ -233,7 +273,7 @@ static void write_plane_sbs(const uint8_t *l, const uint8_t *r, int stride, int 
 }
 static void dump_frame(void)
 {
-	int sbs = dump == 2 && out.samples_mvc[0] != NULL;
+	int sbs = dump == 2 && out.views[1].planes[0] != NULL;
 	if (!y4m_started) {
 		// frame rate from the SPS VUI (time_scale / 2 / num_units_in_tick for a
 		// progressive frame); fall back to 24000/1001 when the stream omits it
@@ -248,13 +288,13 @@ static void dump_frame(void)
 	}
 	fputs("FRAME\n", stdout);
 	if (sbs) {
-		write_plane_sbs(out.samples[0], out.samples_mvc[0], out.stride_Y, out.width_Y, out.height_Y);
-		write_plane_sbs(out.samples[1], out.samples_mvc[1], out.stride_C, out.width_C, out.height_C);
-		write_plane_sbs(out.samples[2], out.samples_mvc[2], out.stride_C, out.width_C, out.height_C);
+		write_plane_sbs(out.views[0].planes[0], out.views[1].planes[0], out.stride_Y, out.width_Y, out.height_Y);
+		write_plane_sbs(out.views[0].planes[1], out.views[1].planes[1], out.stride_C, out.width_C, out.height_C);
+		write_plane_sbs(out.views[0].planes[2], out.views[1].planes[2], out.stride_C, out.width_C, out.height_C);
 	} else {
-		write_plane(out.samples[0], out.stride_Y, out.width_Y, out.height_Y);
-		write_plane(out.samples[1], out.stride_C, out.width_C, out.height_C);
-		write_plane(out.samples[2], out.stride_C, out.width_C, out.height_C);
+		write_plane(out.views[0].planes[0], out.stride_Y, out.width_Y, out.height_Y);
+		write_plane(out.views[0].planes[1], out.stride_C, out.width_C, out.height_C);
+		write_plane(out.views[0].planes[2], out.stride_C, out.width_C, out.height_C);
 	}
 }
 
@@ -263,21 +303,21 @@ static void dump_frame(void)
 static int check_frame()
 {
 	// check that the number of returned views is as expected
-	if ((out.samples_mvc[0] != NULL) != (conf[1] != NULL)) {
-		printf("Number of returned views (%d) does not match number of YUV files found (%d)\n", (out.samples_mvc[0] != NULL) + 1, (conf[1] != NULL) + 1);
+	if ((out.views[1].planes[0] != NULL) != (conf[1] != NULL)) {
+		printf("Number of returned views (%d) does not match number of YUV files found (%d)\n", (out.views[1].planes[0] != NULL) + 1, (conf[1] != NULL) + 1);
 		moveup = "";
 		return -2;
 	}
 	
 	// check that each macroblock matches the conformance buffer
-	int cropt = out.frame_crop_offsets[0];
-	int cropr = out.frame_crop_offsets[1];
-	int cropb = out.frame_crop_offsets[2];
-	int cropl = out.frame_crop_offsets[3];
+	int cropt = out.crop[0];
+	int cropr = out.crop[1];
+	int cropb = out.crop[2];
+	int cropl = out.crop[3];
 	int pic_width_in_mbs = (cropl + out.width_Y + cropr) >> 4;
 	int pic_height_in_mbs = (cropt + out.height_Y + cropb) >> 4;
 	for (int view = 0; view < 2 && conf[view] != NULL; view += 1) {
-		int id = view ? out.FrameId_mvc : out.FrameId;
+		int id = out.views[view].decode_order;
 		for (int row = 0; row < pic_width_in_mbs; row += 1) {
 			for (int col = 0; col < pic_height_in_mbs; col += 1) {
 				for (int iYCbCr = 0; iYCbCr < 3; iYCbCr++) {
@@ -285,7 +325,7 @@ static int check_frame()
 					int depth = (iYCbCr == 0 ? out.bit_depth_Y : out.bit_depth_C) > 8;
 					int sh_width = (iYCbCr > 0 && out.width_C < out.width_Y);
 					int sh_height = (iYCbCr > 0 && out.height_C < out.height_Y);
-					const uint8_t *p = (view ? out.samples_mvc : out.samples)[iYCbCr];
+					const uint8_t *p = out.views[view].planes[iYCbCr];
 					const uint8_t *q = conf[view] +
 						(iYCbCr > 0) * (out.bit_depth_Y == 8 ? out.width_Y : out.width_Y << 1) * out.height_Y +
 						(iYCbCr > 1) * (out.bit_depth_C == 8 ? out.width_C : out.width_C << 1) * out.height_C;
@@ -332,7 +372,7 @@ static int check_frame()
 static int drain_frames(int *res, int *quit)
 {
 	int drained = 0;
-	while (!edge264_get_frame(d, &out, 0)) {
+	while (!receive_frame()) {
 		drained++;
 		frames_out++;
 		if (dump)
@@ -374,7 +414,8 @@ static int keep_decoding(int res)
 
 static int finish_decode_result(int res, const uint8_t *end1)
 {
-	edge264_flush(d);
+	release_out();
+	edge264mvc_flush(d);
 	if (skipped_corrupt > 0) {
 		fprintf(stderr, "edge264: skipped %u corrupt NAL unit(s); output may show brief artefacts\n", skipped_corrupt);
 		skipped_corrupt = 0;
@@ -391,8 +432,8 @@ static int decode_mapped_input(const uint8_t *nal, const uint8_t *end0, const ui
 	y4m_started = 0; // one Y4M stream header per file
 	frames_out = 0;
 	do {
-		const uint8_t *end = edge264_find_start_code(nal, end0, 0);
-		res = edge264_decode_NAL(d, nal, end, NULL, NULL);
+		const uint8_t *end = nal < end0 ? nal + edge264mvc_find_start_code(nal, end0 - nal) : end0;
+		res = send_nal(nal, end);
 		int drained = drain_frames(&res, quit);
 		if (res != ENOBUFS)
 			nal = end + 3;
@@ -407,7 +448,7 @@ static int decode_mapped_input(const uint8_t *nal, const uint8_t *end0, const ui
 		// (nal = end0). Inert on well-formed streams (every ENOBUFS there drains
 		// at least one frame, resetting the counter).
 		stuck = (res == ENOBUFS && drained == 0) ? stuck + 1 : 0;
-		if (stuck > 64) { d->flushing = 1; nal = end0; stuck = 0; }
+		if (stuck > 64) { nal = end0; stuck = 0; } // give up and end the stream
 	} while (keep_decoding(res));
 	return finish_decode_result(res, end1);
 }
@@ -489,7 +530,7 @@ static int stream_fill(StreamBuffer *s)
 static size_t stream_find_start_code(const uint8_t *data, size_t start, size_t end, size_t *delimiter)
 {
 	const uint8_t *limit = data + end;
-	const uint8_t *found = edge264_find_start_code(data + start, limit, 0);
+	const uint8_t *found = start < end ? data + start + edge264mvc_find_start_code(data + start, end - start) : limit;
 	if (found == limit)
 		return SIZE_MAX;
 	if (found > data + start && found[-1] == 0)
@@ -622,7 +663,7 @@ static int decode_stream_input(int fd, const char *name, const uint8_t *end1, in
 			}
 			current = 1;
 		}
-		res = edge264_decode_NAL(d, nal, end, NULL, NULL);
+		res = send_nal(nal, end);
 		int drained = drain_frames(&res, quit);
 		if (res != ENOBUFS) {
 			if (consume != 0)
@@ -633,8 +674,7 @@ static int decode_stream_input(int fd, const char *name, const uint8_t *end1, in
 		// sentinel alone cannot arm `flushing` (decode_NAL returns ENOBUFS at its
 		// fullness gate first), so set it here before feeding the sentinel.
 		stuck = (res == ENOBUFS && drained == 0) ? stuck + 1 : 0;
-		if (stuck > 64) {
-			d->flushing = 1;
+		if (stuck > 64) { // give up and end the stream
 			nal = s.data;
 			end = s.data;
 			consume = 0;
@@ -881,7 +921,16 @@ int main(int argc, char *argv[])
 	
 	struct timespec t0, t1;
 	clock_gettime(CLOCK_MONOTONIC, &t0);
-	d = edge264_alloc(n_threads, trace ? (int(*)(const char*, void*))fputs : NULL, trace_file, trace > 1, NULL, NULL, NULL);
+	Edge264MvcSettings settings;
+	edge264mvc_default_settings(&settings);
+	settings.n_threads = n_threads < 0 ? 0 : n_threads == 0 ? 1 : n_threads; // -1 auto, 0 single-threaded
+	settings.log_cb = trace ? trace_line : NULL;
+	settings.log_arg = trace_file;
+	settings.log_mbs = trace > 1;
+	if (edge264mvc_open(&d, &settings) != EDGE264MVC_OK) {
+		fprintf(stderr, "edge264mvc_open failed\n");
+		return 1;
+	}
 	
 	// check if input is a directory by trying to move into it
 	if (strcmp(file_name, "-") == 0) {
@@ -908,7 +957,8 @@ int main(int argc, char *argv[])
 		fprintf(msg, "%s%d " GREEN "PASS" RESET ", %d " YELLOW "UNSUPPORTED" RESET ", %d " RED "FAIL" RESET ", %d " BLUE "FLAGGED" RESET "\n", moveup, count_pass, count_unsup, count_fail, count_flag);
 	else
 		fprintf(msg, "%s%d " GREEN "PASS" RESET ", %d " YELLOW "UNSUPPORTED" RESET ", %d " RED "FAIL" RESET "\n", moveup, count_pass, count_unsup, count_fail);
-	edge264_free(&d);
+	release_out();
+	edge264mvc_close(&d);
 	
 	// close SDL if enabled
 	if (display) {

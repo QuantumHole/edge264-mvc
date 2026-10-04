@@ -6,6 +6,7 @@
 #define edge264_COMMON_H
 
 #include <assert.h>
+#include <errno.h>
 #include <limits.h>
 #include <pthread.h>
 #include <stddef.h>
@@ -49,7 +50,36 @@
 	#include <wasm_simd128.h>
 #endif
 
-#include "../edge264.h"
+#include "../edge264mvc.h"
+
+// Internal decoder types, formerly the public API of edge264
+typedef struct Edge264MvcDecoder Edge264Decoder;
+typedef Edge264MvcLogCb Edge264LogCb;
+typedef void (*Edge264UnrefCb)(int ret, void *unref_arg);
+typedef void (*Edge264AllocCb)(void **samples, unsigned samples_size, void **mbs, unsigned mbs_size, int errno_on_fail, void *alloc_arg);
+typedef void (*Edge264FreeCb)(void *samples, void *mbs, void *alloc_arg);
+typedef struct Edge264Frame {
+	const uint8_t *samples[3]; // Y/Cb/Cr planes
+	const uint8_t *samples_mvc[3]; // second view
+	const uint8_t *mb_errors; // unused, always NULL
+	int8_t bit_depth_Y;
+	int8_t bit_depth_C;
+	int16_t width_Y;
+	int16_t width_C;
+	int16_t height_Y;
+	int16_t height_C;
+	int16_t stride_Y;
+	int16_t stride_C;
+	int16_t stride_mb;
+	int32_t FrameId;
+	int32_t FrameId_mvc; // second view
+	int32_t Poc;
+	int32_t Poc_mvc; // second view
+	int64_t DisplayPoc;
+	int64_t DisplayPoc_mvc; // second view
+	int16_t frame_crop_offsets[4]; // {top,right,bottom,left}
+	void *return_arg;
+} Edge264Frame;
 
 
 
@@ -399,7 +429,7 @@ typedef struct {
 	int32_t first_mb;
 	int32_t keep_mb;
 } Edge264PendingSlice; // a decoded slice left for another thread to deblock and publish in order
-typedef struct Edge264Decoder {
+struct Edge264MvcDecoder {
 	// minimal set of fields preserved across flushes
 	Edge264GetBits gb; // must be first in the struct to use the same pointer for bitstream functions
 	int8_t n_threads; // 0 to disable multithreading
@@ -424,6 +454,11 @@ typedef struct Edge264Decoder {
 	pthread_cond_t frame_progress[32]; // signals next_deblock_addr[i] has reached progress_wake_addr[i]
 	pthread_cond_t task_complete;
 	Edge264Frame out;
+	int32_t max_frame_mbs; // largest frame accepted, in macroblocks
+	int8_t want_frame; // send_nal returned EDGE264MVC_AGAIN, so receive_frame waits for a frame
+	int8_t ended; // send_end was called, so receive_frame drains to EDGE264MVC_END
+	int64_t in_pts; // values sent with the NAL being parsed
+	int64_t in_user_data;
 	
 	// general contextual fields
 	int8_t nal_ref_idc; // 2 significant bits
@@ -479,6 +514,9 @@ typedef struct Edge264Decoder {
 	uint32_t task_seq[16]; // decoding order of each task, workers pick the oldest ready task
 	uint32_t next_task_seq;
 	Edge264Task tasks[16];
+	uint32_t frame_flags[32]; // EDGE264MVC_VIEW_* of each frame, OR-ed atomically by the workers
+	int64_t frame_pts[32]; // values sent with the NAL starting each frame
+	int64_t frame_user_data[32];
 	
 	// Logging context
 	uint64_t log_base_us; // timestamp of decoder initialization
@@ -486,7 +524,7 @@ typedef struct Edge264Decoder {
 	void *log_arg;
 	uint16_t log_pos; // next writing position in log_buf
 	char log_buf[9416];
-} Edge264Decoder;
+};
 
 
 

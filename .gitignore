@@ -52,6 +52,7 @@
 !tests/liveness/*.txt
 !tests/liveness/*.md
 !tests/asan_check.c
+!tests/fuzz_decode.c
 !tests/asan
 !tests/asan/*.264
 !tests/asan/*.txt

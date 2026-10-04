@@ -28,7 +28,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
-#include "edge264.h"
+#include "edge264mvc.h"
 
 #define RED "\e[0;31m"
 #define GREEN "\e[0;32m"
@@ -36,7 +36,7 @@
 
 // A non-NULL log callback is required so the decoder selects the log-enabled
 // parsers (parse_sei_log); it deliberately does nothing with the strings.
-static int logcb(const char *s, void *a) { (void)s; (void)a; return 0; }
+static void logcb(const char *s, void *a) { (void)s; (void)a; }
 
 static uint8_t *map_file(const char *path, size_t *size_out) {
 	int fd = open(path, O_RDONLY);
@@ -55,38 +55,47 @@ static uint8_t *map_file(const char *path, size_t *size_out) {
 	return m;
 }
 
-// Returns the number of NALs that returned EBADMSG, so a "clean" fixture (a
+// Returns the number of NALs reported as corrupt, so a "clean" fixture (a
 // valid stream) can be asserted to decode without any invalid-stream error.
 static int decode_all(const uint8_t *buf, size_t size) {
-	Edge264Decoder *dec = edge264_alloc(0, logcb, NULL, 0, NULL, NULL, NULL);
-	const uint8_t *nal = buf + 3 + (size > 2 && buf[2] == 0);
-	const uint8_t *end = buf + size;
-	int res, badmsg = 0;
-	Edge264Frame f;
-	// Decode like a player: a damaged NAL (EBADMSG) is skipped rather than
-	// ending the stream, and the end of the stream drains the held frames.
-	// ENOBUFS promises a frame to drain before the same NAL is fed again, so a
-	// run of them without any frame is a stall the caller cannot resolve.
-	int stalled = 0;
-	while (nal < end) {
-		const uint8_t *sc = edge264_find_start_code(nal, end, 0);
-		res = edge264_decode_NAL(dec, nal, sc, NULL, NULL);
-		badmsg += res == EBADMSG;
-		int drained = 0;
-		while (edge264_get_frame(dec, &f, 0) == 0)
-			drained++;
-		if (res != ENOBUFS) {
-			nal = sc + 3;
-			stalled = 0;
-		} else if (drained == 0 && ++stalled > 64) {
-			edge264_free(&dec);
-			return -1;
+	Edge264MvcSettings settings;
+	edge264mvc_default_settings(&settings);
+	settings.n_threads = 1;
+	settings.log_cb = logcb;
+	Edge264MvcDecoder *dec;
+	if (edge264mvc_open(&dec, &settings) != EDGE264MVC_OK)
+		return -1;
+	Edge264MvcFrame f;
+	int badmsg = 0;
+	// Decode like a player: a damaged NAL is skipped rather than ending the
+	// stream, and the end of the stream receives the held frames. Every
+	// EDGE264MVC_AGAIN round must make progress, so a run of rounds without
+	// any frame is a stall the caller cannot resolve.
+	size_t pos = edge264mvc_find_start_code(buf, size);
+	while (pos < size) {
+		size_t start = pos + 3;
+		size_t next = start + edge264mvc_find_start_code(buf + start, size - start);
+		int res;
+		for (int stalled = 0; (res = edge264mvc_send_nal(dec, buf + start, next - start, 0, 0)) == EDGE264MVC_AGAIN; ) {
+			int received = 0;
+			while (edge264mvc_receive_frame(dec, &f) == EDGE264MVC_OK) {
+				edge264mvc_release_frame(dec, &f);
+				received++;
+			}
+			if (received == 0 && ++stalled > 64) {
+				edge264mvc_close(&dec);
+				return -1;
+			}
 		}
+		badmsg += res == EDGE264MVC_CORRUPT;
+		while (edge264mvc_receive_frame(dec, &f) == EDGE264MVC_OK)
+			edge264mvc_release_frame(dec, &f);
+		pos = next;
 	}
-	for (int i = 0; i < 1000 && edge264_decode_NAL(dec, end, end, NULL, NULL) != ENODATA; i++)
-		while (edge264_get_frame(dec, &f, 0) == 0) {}
-	while (edge264_get_frame(dec, &f, 0) == 0) {}
-	edge264_free(&dec);
+	edge264mvc_send_end(dec);
+	while (edge264mvc_receive_frame(dec, &f) == EDGE264MVC_OK)
+		edge264mvc_release_frame(dec, &f);
+	edge264mvc_close(&dec);
 	return badmsg;
 }
 
@@ -120,14 +129,14 @@ static int do_run(const char *manifest, const char *dir) {
 		int badmsg = decode_all(buf, size);
 		munmap(buf, size);
 		if (badmsg < 0) {
-			printf(RED "FAIL" RESET " %s (stall: ENOBUFS without any frame to drain)\n", name);
+			printf(RED "FAIL" RESET " %s (stall: EDGE264MVC_AGAIN without progress)\n", name);
 			fclose(mf);
 			return 1;
 		}
-		// A "clean" fixture is a valid stream: any EBADMSG is a regression (e.g.
+		// A "clean" fixture is a valid stream: any corrupt NAL is a regression (e.g.
 		// a small trailing SEI mis-skipped and misreturned as an invalid stream).
 		if (must_be_clean && badmsg != 0) {
-			printf(RED "FAIL" RESET " %s (valid stream returned EBADMSG x%d)\n", name, badmsg);
+			printf(RED "FAIL" RESET " %s (valid stream reported corrupt NALs x%d)\n", name, badmsg);
 			fclose(mf);
 			return 1;
 		}

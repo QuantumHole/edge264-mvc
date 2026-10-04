@@ -78,7 +78,15 @@
  * _ to benchmark ffmpeg: ffmpeg -hide_banner -benchmark -threads 1 -i video.264 -f null -
  */
 
+#if defined(__linux__) && !defined(_GNU_SOURCE)
+	#define _GNU_SOURCE // sched_getaffinity
+#endif
 #include "edge264_internal.h"
+#ifdef _WIN32
+	#include <windows.h> // GetProcessAffinityMask
+#elif defined(__linux__)
+	#include <sched.h>
+#endif
 #if defined(__linux__)
 	#include <sys/mman.h>
 	#define HUGE_PAGE_SIZE ((size_t)2 << 20)
@@ -98,42 +106,6 @@
 	#define aligned_malloc aligned_alloc
 	#define aligned_free free
 #endif
-
-
-
-const uint8_t *edge264_find_start_code(const uint8_t *buf, const uint8_t *end, int four_byte) {
-	four_byte = four_byte != 0;
-	buf += four_byte;
-	if (buf >= end)
-		return end;
-	const i8x16 *p = (i8x16 *)((uintptr_t)buf & -16);
-	i8x16 zero = {};
-	i8x16 c1 = set8(1);
-	i8x16 lo0 = {};
-	i8x16 v = *p;
-	i8x16 hi0 = (v == zero) & shlv128(set8(-1), (uintptr_t)buf & 15);
-	while (1) {
-		#if SIMD == SSE
-			unsigned m = movemask(shrd128(lo0, hi0, 14) & shrd128(lo0, hi0, 15) & (v == c1));
-			if (m) {
-				const uint8_t *res = (uint8_t *)p - 2 - four_byte + __builtin_ctz(m);
-				if (*res == 0)
-					return minp(res, end);
-			}
-		#else
-			uint64_t m = (uint64_t)shrlou16(shrd128(lo0, hi0, 14) & shrd128(lo0, hi0, 15) & (v == c1), 4);
-			if (m) {
-				const uint8_t *res = (uint8_t *)p - 2 - four_byte + (__builtin_ctzll(m) >> 2);
-				if (*res == 0)
-					return minp(res, end);
-			}
-		#endif
-		if ((uint8_t *)++p >= end)
-			return end;
-		lo0 = hi0;
-		hi0 = ((v = *p) == zero);
-	}
-}
 
 
 
@@ -173,7 +145,7 @@ static int unsup_NAL(Edge264Decoder *dec, Edge264UnrefCb unref_cb, void *unref_a
 
 
 
-Edge264Decoder *edge264_alloc(int n_threads, Edge264LogCb log_cb, void *log_arg, int log_mbs, Edge264AllocCb alloc_cb, Edge264FreeCb free_cb, void *alloc_arg) {
+static Edge264Decoder *alloc_decoder(int n_threads, Edge264LogCb log_cb, void *log_arg, int log_mbs) {
 	Edge264Decoder *dec = aligned_malloc(64, sizeof(*dec)); // maximal SIMD type alignment used in edge264
 	if (dec == NULL)
 		return NULL;
@@ -183,9 +155,9 @@ Edge264Decoder *edge264_alloc(int n_threads, Edge264LogCb log_cb, void *log_arg,
 	dec->PrevRefFrameNum[0] = dec->PrevRefFrameNum[1] = dec->prevFrameId = -1;
 	dec->taskPics_v = dec->get_frame_queue_v[0] = dec->get_frame_queue_v[1] = set8(-1);
 	dec->n_threads = n_threads;
-	dec->alloc_cb = alloc_cb && free_cb ? alloc_cb : internal_alloc;
-	dec->free_cb = alloc_cb && free_cb ? free_cb : internal_free;
-	dec->alloc_arg = alloc_arg;
+	dec->alloc_cb = internal_alloc;
+	dec->free_cb = internal_free;
+	dec->alloc_arg = NULL;
 	dec->log_cb = log_cb;
 	dec->log_arg = log_arg;
 	
@@ -251,15 +223,23 @@ Edge264Decoder *edge264_alloc(int n_threads, Edge264LogCb log_cb, void *log_arg,
 			return aligned_free(dec), NULL;
 	#endif
 	
-	// get the number of logical cores if requested
+	// get the number of logical cores available to the process if requested
 	if (n_threads < 0) {
+		int n_cpus = 0;
 		#ifdef _WIN32
-			const char *env = getenv("NUMBER_OF_PROCESSORS");
-			int n_cpus = env != NULL ? atoi(env) : 0;
-		#else
-			int n_cpus = sysconf(_SC_NPROCESSORS_ONLN);
+			DWORD_PTR process_mask, system_mask;
+			if (GetProcessAffinityMask(GetCurrentProcess(), &process_mask, &system_mask))
+				n_cpus = __builtin_popcountll(process_mask);
+		#elif defined(__linux__)
+			cpu_set_t set;
+			if (sched_getaffinity(0, sizeof(set), &set) == 0)
+				n_cpus = CPU_COUNT(&set);
 		#endif
-		n_threads = n_cpus > 0 ? n_cpus : 0; // a failed detection -> single-threaded
+		#ifndef _WIN32
+			if (n_cpus <= 0)
+				n_cpus = sysconf(_SC_NPROCESSORS_ONLN);
+		#endif
+		n_threads = n_cpus > 1 ? n_cpus : 0; // a single core or a failed detection -> single-threaded
 	}
 	// reason: clamp to the fixed-size worker pool and persist the result, because
 	// edge264_free's join loop uses dec->n_threads as its bound (`i < dec->n_threads`).
@@ -307,20 +287,23 @@ Edge264Decoder *edge264_alloc(int n_threads, Edge264LogCb log_cb, void *log_arg,
 
 
 
-void edge264_flush(Edge264Decoder *dec) {
+static void flush_decoder(Edge264Decoder *dec) {
 	if (dec == NULL)
 		return;
 	if (dec->n_threads)
 		pthread_mutex_lock(&dec->lock);
 	flush_frames(dec);
+	// frames received but not released yet keep their slots until released
+	uint32_t held = dec->output_frames & ~dec->to_get_frames;
 	clear_decoder(dec);
+	dec->output_frames = held;
 	if (dec->n_threads)
 		pthread_mutex_unlock(&dec->lock);
 }
 
 
 
-void edge264_free(Edge264Decoder **pdec) {
+static void free_decoder(Edge264Decoder **pdec) {
 	Edge264Decoder *dec;
 	if (pdec != NULL && (dec = *pdec) != NULL) {
 		*pdec = NULL;
@@ -379,7 +362,7 @@ static void internal_unref_nal(int ret, void *nal_base) {
  * to allow wrapping around memory, so the buffer may be close to end of memory
  * without risk.
  */
-int edge264_decode_NAL(Edge264Decoder *dec, const uint8_t *buf, const uint8_t *end, Edge264UnrefCb unref_cb, void *unref_arg)
+static int decode_nal(Edge264Decoder *dec, const uint8_t *buf, const uint8_t *end, int64_t pts, int64_t user_data)
 {
 	static const char * const nal_unit_type_names[32] = {
 		[0 ... 31] = "Unknown",
@@ -440,37 +423,32 @@ int edge264_decode_NAL(Edge264Decoder *dec, const uint8_t *buf, const uint8_t *e
 	}
 	dec->flushing = 0;
 
-	// In the multithreaded path, slice NALs (types 1, 5, 20) are decoded by a
-	// worker thread *after* this call returns, so their bytes must outlive the
-	// caller's buffer. The unref_cb contract documents this, but it is subtle
-	// and easy to miss - a caller that reuses or frees its NAL buffer right
-	// after decode_NAL (correct for single-thread, where decoding is synchronous)
-	// silently corrupts the in-flight slice, desynchronising CABAC and stalling
-	// the DPB. Copy the slice into decoder-owned memory and free it from the
-	// task's unref_cb when the worker is done; the caller's buffer is then free
-	// the moment decode_NAL returns, regardless of how the caller manages it.
-	// The copy must reproduce the buffer environment the bitstream reader relies
-	// on (and which the caller's buffer provides for free): the reader does an
-	// unaligned load from CPB-2 (so the two bytes before the NAL must be readable
-	// and must not spoof a 00 00 0x escape - emulate the 00 00 01 start-code end),
-	// and aligned 16-byte loads around `end` (so the allocation must be 16-byte
-	// aligned and extend past `end`). Hence: 16-byte front pad ending in 00 00 01,
-	// then the NAL, then >=16-byte trailing pad, 16-aligned.
-	uint8_t *nal_base = NULL;
-	if (dec->n_threads && (0x100022 & 1 << (buf[0] & 0x1f))) { // slice types 1, 5, 20
-		size_t nal_len = end - buf;
-		size_t cap = (16 + nal_len + 32 + 15) & ~(size_t)15;
-		if ((nal_base = aligned_malloc(16, cap)) == NULL) {
+	// Decode from a decoder-owned copy of the NAL, so that the caller's buffer
+	// is free the moment this returns (worker threads decode slices after that),
+	// and so that the reads around the NAL stay inside memory the decoder owns:
+	// the bitstream reader does an unaligned load from CPB-2 (the two bytes
+	// before the NAL must be readable and must not spoof a 00 00 0x escape -
+	// emulate the end of a 00 00 01 start code) and aligned 16-byte loads around
+	// `end` (the allocation must be 16-byte aligned and extend past `end`).
+	// Hence: 16-byte front pad ending in 00 00 01, then the NAL, then a
+	// >=16-byte trailing pad, 16-aligned. A slice task frees its copy when done.
+	size_t nal_len = end - buf;
+	size_t cap = (16 + nal_len + 32 + 15) & ~(size_t)15;
+	uint8_t *nal_base = aligned_malloc(16, cap);
+	if (nal_base == NULL) {
+		if (dec->n_threads)
 			pthread_mutex_unlock(&dec->lock);
-			return ENOMEM;
-		}
-		memset(nal_base, 0, 16);
-		nal_base[15] = 1; // buf[-1]=01, buf[-2]=00, buf[-3]=00 -> a 00 00 01 start code
-		memcpy(nal_base + 16, buf, nal_len);
-		memset(nal_base + 16 + nal_len, 0, cap - 16 - nal_len); // trailing pad for read-ahead
-		buf = nal_base + 16;
-		end = buf + nal_len;
+		return ENOMEM;
 	}
+	memset(nal_base, 0, 16);
+	nal_base[15] = 1; // buf[-1]=01, buf[-2]=00, buf[-3]=00 -> a 00 00 01 start code
+	memcpy(nal_base + 16, buf, nal_len);
+	memset(nal_base + 16 + nal_len, 0, cap - 16 - nal_len); // trailing pad for read-ahead
+	buf = nal_base + 16;
+	end = buf + nal_len;
+	int is_slice = 0x100022 >> (buf[0] & 0x1f) & 1; // types 1, 5, 20
+	dec->in_pts = pts;
+	dec->in_user_data = user_data;
 
 	// prefill the bitstream cache while parsing the NAL byte header
 	dec->gb.CPB = buf;
@@ -489,9 +467,8 @@ int edge264_decode_NAL(Edge264Decoder *dec, const uint8_t *buf, const uint8_t *e
 			dec->nal_ref_idc,
 			dec->nal_unit_type, nal_unit_type_names[dec->nal_unit_type], unsup_if(!parser));
 	}
-	// For a copied slice, the task owns the copy and frees it via internal_unref_nal
-	// when the worker finishes; otherwise the caller's unref_cb/arg flow through.
-	int ret = parser(dec, nal_base ? internal_unref_nal : unref_cb, nal_base ? (void *)nal_base : unref_arg);
+	// a slice task owns the copy and frees it via internal_unref_nal when done
+	int ret = parser(dec, is_slice ? internal_unref_nal : NULL, is_slice ? (void *)nal_base : NULL);
 	// printf("nal_unit_type=%d, ret=%d\n\n", dec->nal_unit_type, ret);
 	// Queue the dependent views of already-queued bases on the parsing thread
 	// (idempotent, cheap for non-MVC), so the consumer-side pairing valve in
@@ -499,13 +476,9 @@ int edge264_decode_NAL(Edge264Decoder *dec, const uint8_t *buf, const uint8_t *e
 	// parse-side bump triggers - stays inert on well-formed streams.
 	catch_up_dependent_bumps(dec);
 
-	// Release the caller's NAL buffer on success: non-slices always, and copied
-	// slices too (we hold our own copy, so the caller buffer is already free).
-	if (unref_cb && ret == 0 && (nal_base || !(0x100022 & 1 << dec->nal_unit_type))) // 1, 5 or 20
-		unref_cb(ret, unref_arg);
-	// A copied slice that created no task (error / ENOBUFS re-feed) has no owner
-	// for the copy - free it here so it does not leak.
-	if (nal_base && ret != 0)
+	// any other NAL, or a slice that created no task (error / ENOBUFS re-feed),
+	// leaves the copy without owner
+	if (!is_slice || ret != 0)
 		aligned_free(nal_base);
 	if (dec->n_threads)
 		pthread_mutex_unlock(&dec->lock);
@@ -552,7 +525,7 @@ static int64_t edge264_unwrap_output_poc(Edge264Decoder *dec, int view, int32_t 
  * _ there are more frames to output than max_num_reorder_frames
  * _ there is no empty slot for the next frame
  */
-int edge264_get_frame(Edge264Decoder *dec, Edge264Frame *out, int borrow) {
+static int get_frame(Edge264Decoder *dec, Edge264Frame *out, int borrow) {
 	if (dec == NULL || out == NULL)
 		return EINVAL;
 	if (dec->n_threads)
@@ -839,9 +812,210 @@ int edge264_get_frame(Edge264Decoder *dec, Edge264Frame *out, int borrow) {
 
 
 
-void edge264_return_frame(Edge264Decoder *dec, void *return_arg) {
+static void return_frame(Edge264Decoder *dec, void *return_arg) {
+	if (dec == NULL)
+		return;
+	if (dec->n_threads)
+		pthread_mutex_lock(&dec->lock);
+	dec->output_frames &= ~(size_t)return_arg;
+	if (dec->n_threads)
+		pthread_mutex_unlock(&dec->lock);
+}
+
+
+
+/**
+ * Public API (edge264mvc.h)
+ */
+#ifndef EDGE264MVC_VERSION_STRING
+	#define EDGE264MVC_VERSION_STRING "2.0.0"
+#endif
+
+uint32_t edge264mvc_api_version(void) {
+	return EDGE264MVC_API_VERSION;
+}
+
+const char *edge264mvc_version(void) {
+	return EDGE264MVC_VERSION_STRING;
+}
+
+void edge264mvc_default_settings(Edge264MvcSettings *settings) {
+	if (settings != NULL)
+		memset(settings, 0, sizeof(*settings));
+}
+
+int edge264mvc_open(Edge264MvcDecoder **decoder, const Edge264MvcSettings *settings) {
+	if (decoder == NULL)
+		return EDGE264MVC_INVALID;
+	*decoder = NULL;
+	Edge264MvcSettings s;
+	edge264mvc_default_settings(&s);
+	if (settings != NULL)
+		s = *settings;
+	if (s.n_threads < 0 || s.max_frame_pixels < 0)
+		return EDGE264MVC_INVALID;
+	// n_threads 0 is auto-detect and 1 decodes on the calling thread, internally -1 and 0
+	Edge264Decoder *dec = alloc_decoder(s.n_threads == 0 ? -1 : s.n_threads == 1 ? 0 : s.n_threads, s.log_cb, s.log_arg, s.log_mbs);
+	if (dec == NULL)
+		return EDGE264MVC_NOMEM;
+	// the largest frame of any level is 139264 macroblocks (MaxFS of level 6.2)
+	dec->max_frame_mbs = s.max_frame_pixels > 0 ? s.max_frame_pixels / 256 : 139264;
+	*decoder = dec;
+	return EDGE264MVC_OK;
+}
+
+void edge264mvc_close(Edge264MvcDecoder **decoder) {
+	free_decoder(decoder);
+}
+
+static int to_result(int ret) {
+	switch (ret) {
+		case 0: return EDGE264MVC_OK;
+		case ENOBUFS: return EDGE264MVC_AGAIN;
+		case ENOTSUP: return EDGE264MVC_UNSUPPORTED;
+		case ENOMEM: return EDGE264MVC_NOMEM;
+		case EINVAL: return EDGE264MVC_INVALID;
+		default: return EDGE264MVC_CORRUPT;
+	}
+}
+
+int edge264mvc_send_nal(Edge264MvcDecoder *dec, const uint8_t *nal, size_t size, int64_t pts, int64_t user_data) {
+	if (dec == NULL || nal == NULL)
+		return EDGE264MVC_INVALID;
+	if (size == 0)
+		return EDGE264MVC_CORRUPT;
+	dec->ended = 0;
+	int ret = to_result(decode_nal(dec, nal, nal + size, pts, user_data));
+	dec->want_frame = ret == EDGE264MVC_AGAIN;
+	return ret;
+}
+
+int edge264mvc_send_end(Edge264MvcDecoder *dec) {
+	if (dec == NULL)
+		return EDGE264MVC_INVALID;
+	// The drain in receive_frame sets flushing once the workers are done, since
+	// it lets get_frame emit incomplete pictures.
+	dec->ended = 1;
+	dec->want_frame = 0;
+	return EDGE264MVC_OK;
+}
+
+// Fill a frame of the public API from one of get_frame, while its slots are held.
+static void export_frame(Edge264Decoder *dec, const Edge264Frame *f, Edge264MvcFrame *out) {
+	memset(out, 0, sizeof(*out));
+	uint32_t slots = (uint32_t)(uintptr_t)f->return_arg;
+	for (int view = 0; view < 2; view++) {
+		const uint8_t * const *planes = view ? f->samples_mvc : f->samples;
+		if (planes[0] == NULL)
+			continue;
+		uint32_t base = view ? dec->non_base_frames : ~dec->non_base_frames;
+		int pic = __builtin_ctz(slots & base);
+		Edge264MvcView *v = &out->views[view];
+		v->planes[0] = planes[0];
+		v->planes[1] = planes[1];
+		v->planes[2] = planes[2];
+		v->pts = dec->frame_pts[pic];
+		v->user_data = dec->frame_user_data[pic];
+		v->display_order = view ? f->DisplayPoc_mvc : f->DisplayPoc;
+		v->poc = view ? f->Poc_mvc : f->Poc;
+		v->decode_order = view ? f->FrameId_mvc : f->FrameId;
+		v->flags = __atomic_load_n(&dec->frame_flags[pic], __ATOMIC_RELAXED);
+	}
+	out->width_Y = f->width_Y;
+	out->height_Y = f->height_Y;
+	out->width_C = f->width_C;
+	out->height_C = f->height_C;
+	out->stride_Y = f->stride_Y;
+	out->stride_C = f->stride_C;
+	out->bit_depth_Y = f->bit_depth_Y;
+	out->bit_depth_C = f->bit_depth_C;
+	for (int i = 0; i < 4; i++)
+		out->crop[i] = f->frame_crop_offsets[i];
+	out->handle = f->return_arg;
+}
+
+int edge264mvc_receive_frame(Edge264MvcDecoder *dec, Edge264MvcFrame *frame) {
+	if (dec == NULL || frame == NULL)
+		return EDGE264MVC_INVALID;
+	for (int drains = 0;; ) {
+		Edge264Frame f;
+		if (get_frame(dec, &f, 1) == 0) {
+			export_frame(dec, &f, frame);
+			dec->want_frame = 0;
+			return EDGE264MVC_OK;
+		}
+		if (dec->ended) {
+			// End of stream: output every picture (bump_all_frames waits for the
+			// workers), then report the end once the drain found nothing left.
+			// Frames the caller holds keep it reporting ENOBUFS, so a few rounds
+			// without any frame end it too.
+			static const uint8_t sentinel = 0; // an empty buffer triggers the drain
+			int ret = decode_nal(dec, &sentinel, &sentinel, 0, 0);
+			if (get_frame(dec, &f, 1) == 0) {
+				export_frame(dec, &f, frame);
+				return EDGE264MVC_OK;
+			}
+			if (ret == ENODATA)
+				return EDGE264MVC_END;
+			// the drain stops at a full output queue, so wait for the workers to
+			// finish its frames before counting a round without progress
+			if (dec->n_threads) {
+				pthread_mutex_lock(&dec->lock);
+				int busy = dec->busy_tasks != 0;
+				if (busy)
+					pthread_cond_wait(&dec->task_complete, &dec->lock);
+				pthread_mutex_unlock(&dec->lock);
+				if (busy)
+					continue;
+			}
+			if (++drains > 4)
+				return EDGE264MVC_END;
+			continue;
+		}
+		// After AGAIN from send_nal a frame is due: wait for the workers to make
+		// one. Once none is busy, try once more, since the last one may have
+		// completed the frame since get_frame looked.
+		if (dec->want_frame && dec->n_threads) {
+			pthread_mutex_lock(&dec->lock);
+			int busy = dec->busy_tasks != 0;
+			if (busy)
+				pthread_cond_wait(&dec->task_complete, &dec->lock);
+			pthread_mutex_unlock(&dec->lock);
+			if (busy)
+				continue;
+			if (get_frame(dec, &f, 1) == 0) {
+				export_frame(dec, &f, frame);
+				dec->want_frame = 0;
+				return EDGE264MVC_OK;
+			}
+		}
+		return EDGE264MVC_AGAIN;
+	}
+}
+
+void edge264mvc_release_frame(Edge264MvcDecoder *dec, const Edge264MvcFrame *frame) {
+	if (dec != NULL && frame != NULL)
+		return_frame(dec, frame->handle);
+}
+
+void edge264mvc_flush(Edge264MvcDecoder *dec) {
+	flush_decoder(dec);
 	if (dec != NULL)
-		dec->output_frames &= ~(size_t)return_arg;
+		dec->want_frame = dec->ended = 0;
+}
+
+size_t edge264mvc_find_start_code(const uint8_t *buf, size_t size) {
+	if (buf == NULL)
+		return 0;
+	for (size_t i = 2; i < size; i++) {
+		const uint8_t *one = memchr(buf + i, 1, size - i);
+		if (one == NULL)
+			break;
+		i = one - buf;
+		if (buf[i - 1] == 0 && buf[i - 2] == 0)
+			return i - 2;
+	}
+	return size;
 }
 
 

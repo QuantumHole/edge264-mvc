@@ -29,7 +29,7 @@
 #include <time.h>
 #include <unistd.h>
 
-#include "edge264.h"
+#include "edge264mvc.h"
 
 #define RED "\e[0;31m"
 #define GREEN "\e[0;32m"
@@ -68,29 +68,51 @@ static uint8_t *map_file(const char *path, size_t *size_out) {
 // Returns delivered base-frame count, or -1 if the decoder stalled.
 static int decode_count(const uint8_t *buf, size_t size) {
 	// EDGE264_THREADS lets the liveness suite run the damaged-stream fixtures
-	// under multithreading (default 0), guarding the multithreaded teardown and
-	// MVC-pairing deadlock fixes against regressions.
+	// under multithreading (default 0 = single-thread, <0 = auto), guarding the
+	// multithreaded teardown and MVC-pairing deadlock fixes against regressions.
 	const char *nt = getenv("EDGE264_THREADS");
-	Edge264Decoder *dec = edge264_alloc(nt ? atoi(nt) : 0, NULL, NULL, 0, NULL, NULL, NULL);
-	const uint8_t *nal = buf + 3 + (size > 2 && buf[2] == 0);
-	const uint8_t *end = buf + size;
-	int frames = 0, res;
+	int threads = nt ? atoi(nt) : 0;
+	Edge264MvcSettings settings;
+	edge264mvc_default_settings(&settings);
+	settings.n_threads = threads < 0 ? 0 : threads == 0 ? 1 : threads;
+	Edge264MvcDecoder *dec;
+	if (edge264mvc_open(&dec, &settings) != EDGE264MVC_OK)
+		return -1;
+	Edge264MvcFrame f;
+	int frames = 0, res = EDGE264MVC_OK;
 	long no_progress = 0;
-	do {
-		const uint8_t *sc = edge264_find_start_code(nal, end, 0);
-		res = edge264_decode_NAL(dec, nal, sc, NULL, NULL);
+	size_t pos = edge264mvc_find_start_code(buf, size);
+	while (pos < size) {
+		size_t start = pos + 3;
+		size_t next = start + edge264mvc_find_start_code(buf + start, size - start);
+		res = edge264mvc_send_nal(dec, buf + start, next - start, 0, 0);
 		int delivered = 0;
-		Edge264Frame f;
-		while (edge264_get_frame(dec, &f, 0) == 0) { frames++; delivered++; }
-		if (res == ENOBUFS) {
-			if (delivered == 0 && ++no_progress >= STALL_LIMIT) { frames = -1; break; }
-			// ENOBUFS => drain (done above) then re-feed the same NAL
-		} else {
-			no_progress = 0;
-			nal = sc + 3;
+		while (edge264mvc_receive_frame(dec, &f) == EDGE264MVC_OK) {
+			edge264mvc_release_frame(dec, &f);
+			frames++;
+			delivered++;
 		}
-	} while (res == 0 || res == ENOBUFS || res == ENOTSUP);
-	edge264_free(&dec);
+		if (res == EDGE264MVC_AGAIN) {
+			// AGAIN => receive (done above) then send the same NAL again
+			if (delivered == 0 && ++no_progress >= STALL_LIMIT) {
+				edge264mvc_close(&dec);
+				return -1;
+			}
+			continue;
+		}
+		no_progress = 0;
+		if (res != EDGE264MVC_OK && res != EDGE264MVC_UNSUPPORTED)
+			break; // the decode stops at the first failing NAL
+		pos = next;
+	}
+	if (pos >= size) {
+		edge264mvc_send_end(dec);
+		while (edge264mvc_receive_frame(dec, &f) == EDGE264MVC_OK) {
+			edge264mvc_release_frame(dec, &f);
+			frames++;
+		}
+	}
+	edge264mvc_close(&dec);
 	return frames;
 }
 

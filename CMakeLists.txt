@@ -1,20 +1,20 @@
 # ==============================================================================
-# edge264 — CMakeLists.txt
+# edge264-mvc — CMakeLists.txt
 # Generated with AI assistance by Claude Sonnet 4.6 (claude-sonnet-4-6).
 #
 # Thin wrapper that delegates all build logic to the Makefile.
 # It maps standard CMake variables to Makefile parameters and exposes an
-# imported target edge264::edge264 for use with target_link_libraries.
+# imported target edge264mvc::edge264mvc for use with target_link_libraries.
 #
 # The only value to keep in sync with the Makefile when it changes is
 # EDGE264_MAJOR below.
 # ==============================================================================
 
 cmake_minimum_required(VERSION 3.14)
-project(edge264 VERSION 1.0 LANGUAGES C)
+project(edge264mvc VERSION 2.0 LANGUAGES C)
 
 # Keep in sync with MAJOR in the Makefile.
-set(EDGE264_MAJOR 1)
+set(EDGE264_MAJOR 2)
 
 # Optional: forward a VARIANTS string to the Makefile
 # (e.g. -DEDGE264_VARIANTS=x86-64-v2,x86-64-v3,logs).
@@ -49,21 +49,21 @@ endif()
 # ---- Expected library filename -----------------------------------------------
 # Must match the LIBNAME logic in the Makefile.
 if(_static STREQUAL "yes")
-  set(_libfile libedge264.a)
+  set(_libfile libedge264mvc.a)
 elseif(_os STREQUAL "macos")
-  set(_libfile libedge264.${EDGE264_MAJOR}.dylib)
+  set(_libfile libedge264mvc.${EDGE264_MAJOR}.dylib)
 elseif(_os STREQUAL "linux")
-  set(_libfile libedge264.so.${EDGE264_MAJOR})
+  set(_libfile libedge264mvc.so.${EDGE264_MAJOR})
 elseif(_os STREQUAL "windows")
-  set(_libfile edge264.${EDGE264_MAJOR}.dll)
+  set(_libfile edge264mvc.${EDGE264_MAJOR}.dll)
 elseif(_os STREQUAL "android")
-  set(_libfile libedge264.so)
+  set(_libfile libedge264mvc.so)
 elseif(_os STREQUAL "wasm")
-  set(_libfile edge264.js)
+  set(_libfile edge264mvc.js)
 endif()
 
 # ---- Installation prefix inside the CMake build tree ------------------------
-set(_prefix "${CMAKE_CURRENT_BINARY_DIR}/edge264-install")
+set(_prefix "${CMAKE_CURRENT_BINARY_DIR}/edge264mvc-install")
 
 # ---- Makefile arguments -----------------------------------------------------
 set(_args
@@ -95,7 +95,7 @@ if(_os STREQUAL "android" AND CMAKE_C_COMPILER)
 endif()
 
 # ---- ExternalProject ---------------------------------------------------------
-ExternalProject_Add(edge264_ext
+ExternalProject_Add(edge264mvc_ext
   SOURCE_DIR        "${CMAKE_CURRENT_SOURCE_DIR}"
   CONFIGURE_COMMAND ""
   BUILD_COMMAND     $(MAKE) ${_args}
@@ -108,15 +108,15 @@ ExternalProject_Add(edge264_ext
 
 # ---- Imported target ---------------------------------------------------------
 if(_static STREQUAL "yes")
-  add_library(edge264 STATIC IMPORTED GLOBAL)
+  add_library(edge264mvc STATIC IMPORTED GLOBAL)
 else()
-  add_library(edge264 SHARED IMPORTED GLOBAL)
+  add_library(edge264mvc SHARED IMPORTED GLOBAL)
 endif()
 
-add_dependencies(edge264 edge264_ext)
-set_target_properties(edge264 PROPERTIES
+add_dependencies(edge264mvc edge264mvc_ext)
+set_target_properties(edge264mvc PROPERTIES
   IMPORTED_LOCATION             "${_prefix}/lib/${_libfile}"
   INTERFACE_INCLUDE_DIRECTORIES "${_prefix}/include")
 
 # Canonical namespaced alias consumed by downstream targets.
-add_library(edge264::edge264 ALIAS edge264)
+add_library(edge264mvc::edge264mvc ALIAS edge264mvc)
