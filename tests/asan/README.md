@@ -144,3 +144,12 @@ guard against sanitizer aborts and CPU-burn.
   the end of a stream (unblock_output). get_frame also keeps the queues packed
   when a frame leaves them, since a gap let later bumps push a queued picture
   out of the queue. The harness reports the stall.
+- mvc_conceal_later_base.264: a fuzzer-found MVC stream whose damaged
+  dependent view (left incomplete, with no task left to finish it) shares its
+  frame_num and POC with a base view decoded later. conceal_frame took the
+  matching base with the highest FrameId - that later one - and waited for it
+  to be decoded, but its task could not start: tasks start in decoding order,
+  and every worker was busy waiting for the damaged picture. A deadlock that
+  needs every worker blocked at once, so `make check-robustness` also runs the
+  fixtures with exactly four worker threads, where it hangs before the fix.
+  conceal_frame now only takes a base decoded before the damaged picture.

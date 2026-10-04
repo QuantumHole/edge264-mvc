@@ -409,6 +409,7 @@ else
 	$(Q)$(MAKE) --no-print-directory check-conformance
 	$(Q)$(MAKE) --no-print-directory check-stream-input
 	$(Q)$(MAKE) --no-print-directory check-edge264-test-liveness
+	$(Q)$(MAKE) --no-print-directory check-robustness
 endif
 
 edge264_check$(EXE): src/edge264_check.c edge264mvc.h src/edge264_internal.h $(LIBNAME)
@@ -489,6 +490,15 @@ endif
 # hash/liveness run cannot. Standalone (not part of `check`): the sanitizer
 # build is heavier and opt-in. Run with SANITIZE empty it just decodes the
 # fixtures uninstrumented (the OOB read is then a benign, undetected read).
+# The same crafted fixtures without a sanitizer, single-threaded and with four
+# worker threads, as part of `check`: they also guard hangs, some of which need
+# every worker blocked at once (hence exactly four threads, more than any
+# fixture keeps busy).
+.PHONY: check-robustness
+check-robustness: asan_check$(EXE)
+	$(Q)timeout 90 ./asan_check$(EXE) run tests/asan/manifest.txt tests/asan
+	$(Q)EDGE264_THREADS=4 timeout 90 ./asan_check$(EXE) run tests/asan/manifest.txt tests/asan
+
 .PHONY: check-asan
 check-asan: asan_check$(EXE)
 	$(Q)ASAN_OPTIONS=detect_leaks=0:max_allocation_size_mb=2048 timeout 90 ./asan_check$(EXE) run tests/asan/manifest.txt tests/asan

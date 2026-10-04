@@ -60,7 +60,11 @@ static uint8_t *map_file(const char *path, size_t *size_out) {
 static int decode_all(const uint8_t *buf, size_t size) {
 	Edge264MvcSettings settings;
 	edge264mvc_default_settings(&settings);
-	settings.n_threads = 1;
+	// EDGE264_THREADS as in the other harnesses (default 0 = single-thread,
+	// <0 = auto), for the fixtures that only stall under multithreading
+	const char *nt = getenv("EDGE264_THREADS");
+	int threads = nt ? atoi(nt) : 0;
+	settings.n_threads = threads < 0 ? 0 : threads == 0 ? 1 : threads;
 	settings.log_cb = logcb;
 	Edge264MvcDecoder *dec;
 	if (edge264mvc_open(&dec, &settings) != EDGE264MVC_OK)

@@ -1334,11 +1334,15 @@ static int conceal_frame(Edge264Decoder *dec, int id) {
 	// different sequences share a full POC while carrying different frame_num
 	// (tests/gen_same_poc_stream.py), and would fill the damaged eye from another
 	// access unit: a stale picture presented as the other eye, worse than the
-	// neutral samples it replaces. Take the base once complete, so no worker
-	// still writes it: leave the picture for a later call while the base is
-	// being decoded (waiting here could stall the very tasks completing it), and
-	// conceal the base first if it is damaged too. Fall back to neutral samples
-	// without a base, so the result never depends on thread timing.
+	// neutral samples it replaces. Only a base decoded before the picture can
+	// be its own: a later picture with the same key (a damaged stream) may not
+	// be decoded yet, and waiting for it deadlocked the workers that wait for
+	// this picture, since tasks start in decoding order. Take the base once
+	// complete, so no worker still writes it: leave the picture for a later
+	// call while the base is being decoded (waiting here could stall the very
+	// tasks completing it), and conceal the base first if it is damaged too.
+	// Fall back to neutral samples without a base, so the result never depends
+	// on thread timing.
 	int base = -1;
 	if (dec->non_base_frames >> id & 1) {
 		unsigned live = (dec->short_term_frames | dec->long_term_frames | dec->to_get_frames | dec->output_frames) &
@@ -1347,6 +1351,7 @@ static int conceal_frame(Edge264Decoder *dec, int id) {
 			int i = __builtin_ctz(b);
 			if (dec->samples_buffers[i] && dec->FrameNums[i] == dec->FrameNums[id] &&
 				dec->FieldOrderCnt[0][i] == dec->FieldOrderCnt[0][id] &&
+				dec->FrameIds[i] < dec->FrameIds[id] &&
 				(base < 0 || dec->FrameIds[i] > dec->FrameIds[base]))
 				base = i;
 		}
