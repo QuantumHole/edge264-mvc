@@ -31,3 +31,51 @@ jobs:
       - uses: actions/setup-node@v6
       - uses: mymindstorm/setup-emsdk@v14
       - run: emmake make check
+  # The library as Oku3D ships it on Windows (MinGW, static runtime, portable
+  # baseline with x86-64-v2/v3 dispatch, assertions compiled out), decoded by
+  # the portable harnesses. Without fork() the harnesses decode in-process, so
+  # the job's time limit is the guard against a hang.
+  x86_64-windows-mingw:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          install: make mingw-w64-x86_64-gcc
+      - run: make OS=windows CFLAGS=-march=x86-64 CPPFLAGS=-DNDEBUG "LDFLAGS=-static -lwinpthread" VARIANTS=x86-64-v2,x86-64-v3,logs BUILDTEST=no conformance_check.exe liveness_check.exe asan_check.exe
+      - run: ./conformance_check.exe run tests/conformance/manifest.txt tests/conformance
+      - run: EDGE264_THREADS=8 ./conformance_check.exe run tests/conformance/manifest.txt tests/conformance
+      - run: EDGE264_THREADS=8 ./liveness_check.exe run tests/liveness/manifest.txt tests/liveness
+      - run: ./asan_check.exe run tests/asan/manifest.txt tests/asan
+      - run: EDGE264_THREADS=4 ./asan_check.exe run tests/asan/manifest.txt tests/asan
+  # AddressSanitizer + UndefinedBehaviorSanitizer over the whole test suite,
+  # then ThreadSanitizer over the multithreaded passes. setarch -R: the
+  # sanitizers' shadow memory does not fit the runner's ASLR layout otherwise.
+  x86_64-linux-sanitizers:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+      - run: sudo apt-get update && sudo apt-get install -y clang
+      - run: setarch -R make CC=clang SANITIZE=address,undefined check
+      - run: setarch -R make CC=clang SANITIZE=address,undefined check-asan
+      - run: make clean
+      - run: make CC=clang SANITIZE=thread CFLAGS="-march=x86-64 -g" BUILDTEST=no conformance_check liveness_check asan_check
+      - run: EDGE264_THREADS=8 setarch -R ./conformance_check run tests/conformance/manifest.txt tests/conformance
+      - run: EDGE264_THREADS=8 setarch -R ./liveness_check run tests/liveness/manifest.txt tests/liveness
+      - run: EDGE264_THREADS=4 setarch -R ./asan_check run tests/asan/manifest.txt tests/asan
+  # A short libFuzzer run seeded with the committed streams, so a change that
+  # breaks the decoder on damaged input shows up before a long campaign would.
+  x86_64-linux-fuzz:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - run: sudo apt-get update && sudo apt-get install -y clang
+      - run: make fuzz
+      - run: mkdir -p corpus && setarch -R ./fuzz_decode -max_total_time=300 -max_len=262144 -timeout=10 -rss_limit_mb=4096 corpus tests/asan tests/liveness tests/conformance/2d tests/conformance/mvc
