@@ -6,15 +6,38 @@
 // again), a flush after the end followed by the same stream again, and the
 // pts / user_data passthrough. It uses one committed MVC stream and one 2D
 // stream, each single-threaded and with EDGE264MVC_THREADS worker threads.
+// The struct layouts are checked when it is compiled.
 //
 // Usage: api_check <stream.264>...
 
+#include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 #include "edge264mvc.h"
+
+// The struct layouts are the ABI of the major version: bindings in other
+// languages mirror them field by field (Oku3D's Rust binding asserts the
+// sizes), so a change here needs a new major version. Pinned on 64-bit
+// targets, where pointers are 8 bytes.
+#if UINTPTR_MAX == UINT64_MAX
+#define LAYOUT(type, field, offset) _Static_assert(offsetof(type, field) == offset, #type "." #field " moved");
+LAYOUT(Edge264MvcSettings, n_threads, 0) LAYOUT(Edge264MvcSettings, max_frame_pixels, 4)
+LAYOUT(Edge264MvcSettings, log_cb, 8) LAYOUT(Edge264MvcSettings, log_arg, 16)
+LAYOUT(Edge264MvcSettings, log_mbs, 24) LAYOUT(Edge264MvcSettings, reserved, 28)
+_Static_assert(sizeof(Edge264MvcSettings) == 88, "Edge264MvcSettings changed size");
+LAYOUT(Edge264MvcView, planes, 0) LAYOUT(Edge264MvcView, pts, 24) LAYOUT(Edge264MvcView, user_data, 32)
+LAYOUT(Edge264MvcView, display_order, 40) LAYOUT(Edge264MvcView, poc, 48) LAYOUT(Edge264MvcView, decode_order, 52)
+LAYOUT(Edge264MvcView, flags, 56) LAYOUT(Edge264MvcView, reserved, 60)
+_Static_assert(sizeof(Edge264MvcView) == 64, "Edge264MvcView changed size");
+LAYOUT(Edge264MvcFrame, views, 0) LAYOUT(Edge264MvcFrame, width_Y, 128) LAYOUT(Edge264MvcFrame, height_Y, 132)
+LAYOUT(Edge264MvcFrame, width_C, 136) LAYOUT(Edge264MvcFrame, height_C, 140) LAYOUT(Edge264MvcFrame, stride_Y, 144)
+LAYOUT(Edge264MvcFrame, stride_C, 148) LAYOUT(Edge264MvcFrame, bit_depth_Y, 152) LAYOUT(Edge264MvcFrame, bit_depth_C, 156)
+LAYOUT(Edge264MvcFrame, crop, 160) LAYOUT(Edge264MvcFrame, handle, 176) LAYOUT(Edge264MvcFrame, reserved, 184)
+_Static_assert(sizeof(Edge264MvcFrame) == 216, "Edge264MvcFrame changed size");
+#endif
 
 #define RED "\e[0;31m"
 #define GREEN "\e[0;32m"
