@@ -974,8 +974,8 @@ static void parse_dec_ref_pic_marking(Edge264MvcDecoder *dec, Edge264MvcSeqParam
 				for (unsigned r = same_views; r; r &= r - 1)
 					dec->LongTermFrameIdx[__builtin_ctz(r)] = 0;
 				int tempPicOrderCnt = minw(dec->TopFieldOrderCnt, dec->BottomFieldOrderCnt);
-				dec->FieldOrderCnt[0][dec->currPic] = dec->TopFieldOrderCnt - tempPicOrderCnt;
-				dec->FieldOrderCnt[1][dec->currPic] = dec->BottomFieldOrderCnt - tempPicOrderCnt;
+				dec->FieldOrderCnt[0][dec->currPic] = (int)((unsigned)dec->TopFieldOrderCnt - tempPicOrderCnt);
+				dec->FieldOrderCnt[1][dec->currPic] = (int)((unsigned)dec->BottomFieldOrderCnt - tempPicOrderCnt);
 				while (bump_frame(dec, dec->nal_unit_type == 20, 1u << dec->currPic));
 			}
 			// one format per operation, since a format may not skip an argument
@@ -1727,11 +1727,13 @@ int ADD_VARIANT(parse_slice_layer_without_partitioning)(Edge264MvcDecoder *dec, 
 		dec->FrameNum = PrevRefFrameNum + 1 + ((frame_num - PrevRefFrameNum - 1) & FrameNumMask);
 		int prevPicOrderCnt = dec->prevPicOrderCnt[non_base_view];
 		int inc = (int)(((unsigned)pic_order_cnt_lsb - (unsigned)prevPicOrderCnt) << shift) >> shift; // sign-extends the lsb difference
-		BottomFieldOrderCnt = TopFieldOrderCnt = prevPicOrderCnt + inc;
+		// picture order counts are added modulo 2^32: on a damaged stream the
+		// syntax elements (up to +-2^31) overflow an int, which is undefined
+		BottomFieldOrderCnt = TopFieldOrderCnt = (int)((unsigned)prevPicOrderCnt + inc);
 		log_dec(dec, "  pic_order_cnt: {type: 0, bits: %u, absolute: %d",
 			sps->log2_max_pic_order_cnt_lsb, TopFieldOrderCnt);
 		if (t->pps.bottom_field_pic_order_in_frame_present_flag && !t->field_pic_flag) {
-			BottomFieldOrderCnt += get_se32(&dec->gb, (-1u << 31) + 1, (1u << 31) - 1);
+			BottomFieldOrderCnt = (int)((unsigned)BottomFieldOrderCnt + get_se32(&dec->gb, (-1u << 31) + 1, (1u << 31) - 1));
 			log_dec(dec, ", bottom: %d", BottomFieldOrderCnt);
 		}
 		log_dec(dec, "}\n");
@@ -1758,20 +1760,22 @@ int ADD_VARIANT(parse_slice_layer_without_partitioning)(Edge264MvcDecoder *dec, 
 		dec->FrameNum = PrevRefFrameNum + 1 + ((frame_num - PrevRefFrameNum - 1) & FrameNumMask);
 		int absFrameNum = (sps->num_ref_frames_in_pic_order_cnt_cycle > 0) ? dec->FrameNum : 0;
 		absFrameNum -= (dec->nal_ref_idc == 0 && absFrameNum > 0);
-		TopFieldOrderCnt = delta_pic_order_cnt0 + (dec->nal_ref_idc ? 0 : sps->offset_for_non_ref_pic);
+		// added modulo 2^32 like the type 0 counts above
+		unsigned top = (unsigned)delta_pic_order_cnt0 + (dec->nal_ref_idc ? 0 : sps->offset_for_non_ref_pic);
 		if (absFrameNum > 0) {
-			TopFieldOrderCnt += ((absFrameNum - 1) / sps->num_ref_frames_in_pic_order_cnt_cycle) *
+			top += (unsigned)((absFrameNum - 1) / sps->num_ref_frames_in_pic_order_cnt_cycle) *
 				sps->PicOrderCntDeltas[sps->num_ref_frames_in_pic_order_cnt_cycle - 1] +
 				sps->PicOrderCntDeltas[(absFrameNum - 1) % sps->num_ref_frames_in_pic_order_cnt_cycle];
 		}
-		BottomFieldOrderCnt = TopFieldOrderCnt + sps->offset_for_top_to_bottom_field + delta_pic_order_cnt1;
+		TopFieldOrderCnt = (int)top;
+		BottomFieldOrderCnt = (int)(top + sps->offset_for_top_to_bottom_field + delta_pic_order_cnt1);
 		log_dec(dec, (TopFieldOrderCnt == BottomFieldOrderCnt) ?
 			", absolute: %d}\n" : ", absolute: %d, bottom: %d}\n",
 			TopFieldOrderCnt, BottomFieldOrderCnt);
 	} else {
 		int PrevRefFrameNum = dec->PrevRefFrameNum[non_base_view];
 		dec->FrameNum = PrevRefFrameNum + 1 + ((frame_num - PrevRefFrameNum - 1) & FrameNumMask);
-		TopFieldOrderCnt = BottomFieldOrderCnt = dec->FrameNum * 2 + (dec->nal_ref_idc != 0) - 1;
+		TopFieldOrderCnt = BottomFieldOrderCnt = (int)((unsigned)dec->FrameNum * 2 + (dec->nal_ref_idc != 0) - 1);
 		log_dec(dec, "  pic_order_cnt: {type: 2, absolute: %d}\n", TopFieldOrderCnt);
 	}
 	
@@ -1854,7 +1858,7 @@ int ADD_VARIANT(parse_slice_layer_without_partitioning)(Edge264MvcDecoder *dec, 
 			dec->FrameIds[i] = ++dec->prevFrameId;
 			int PicOrderCnt = 0;
 			if (sps->pic_order_cnt_type == 2) {
-				PicOrderCnt = FrameNum * 2;
+				PicOrderCnt = (int)(FrameNum * 2);
 			} else if (sps->num_ref_frames_in_pic_order_cnt_cycle > 0 && FrameNum > 0) {
 				// Mirror the correct main-path derivation (8.2.1.2): absFrameNum
 				// equals FrameNum for these inferred-reference gap frames, so the
@@ -1862,9 +1866,9 @@ int ADD_VARIANT(parse_slice_layer_without_partitioning)(Edge264MvcDecoder *dec, 
 				// sum, the only element written) and both the quotient and the
 				// remainder use FrameNum-1. Indexing [cycle] read one past the
 				// int16_t[255] array (cycle up to 255) into the next SPS field.
-				PicOrderCnt = (int)((FrameNum - 1) / sps->num_ref_frames_in_pic_order_cnt_cycle) *
+				PicOrderCnt = (int)((FrameNum - 1) / sps->num_ref_frames_in_pic_order_cnt_cycle *
 					sps->PicOrderCntDeltas[sps->num_ref_frames_in_pic_order_cnt_cycle - 1] +
-					sps->PicOrderCntDeltas[(FrameNum - 1) % sps->num_ref_frames_in_pic_order_cnt_cycle];
+					sps->PicOrderCntDeltas[(FrameNum - 1) % sps->num_ref_frames_in_pic_order_cnt_cycle]);
 			}
 			dec->FieldOrderCnt[0][i] = dec->FieldOrderCnt[1][i] = PicOrderCnt;
 			dec->remaining_mbs[i] = 0;

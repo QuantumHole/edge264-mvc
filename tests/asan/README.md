@@ -153,3 +153,10 @@ guard against sanitizer aborts and CPU-burn.
   needs every worker blocked at once, so `make check-robustness` also runs the
   fixtures with exactly four worker threads, where it hangs before the fix.
   conceal_frame now only takes a base decoded before the damaged picture.
+- poc_overflow.264: a fuzzer-found stream whose slice header carries a
+  delta_pic_order_cnt_bottom near -2^31. The picture order count derivation
+  added it to the top field's count in int, which overflows - undefined
+  behaviour (reported by UndefinedBehaviorSanitizer, so it shows in the
+  sanitizer build of check-asan). Picture order counts are now added modulo
+  2^32, in all three pic_order_cnt_type derivations, the frame_num gap and
+  MMCO 5.
