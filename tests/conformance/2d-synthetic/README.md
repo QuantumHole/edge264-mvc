@@ -92,3 +92,9 @@ encoded 0/0. Reproduce:
 Without the fix the multithreaded passes of this fixture's line FAIL (wrong and
 nondeterministic hash); with it, single- and multi-thread both match the
 FFmpeg-anchored hash.
+
+## `gap_reference.264`
+
+Guards the content of frames inferred for a `frame_num` gap (8.2.5.2). A 176x144 libx264 encode of `testsrc2` with one reference frame and no B-frames, with picture 6 removed (`tests/gen_gap_reference.py`, which also lists the encoding command), so picture 7 predicts from the inferred frame. The decoder allocated that frame without writing its samples or macroblocks, so the pictures after the gap showed whatever the reused DPB slot held before - a different picture single- and multithreaded, and varying from run to run. FFmpeg, which this line is anchored to, fills the inferred frame with the previous reference picture.
+
+Without the fix this line FAILs (wrong base hash, single- and multithreaded).

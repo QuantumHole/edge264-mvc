@@ -35,6 +35,7 @@
 !tests/gen_mvc_orphan_tail.py
 !tests/gen_incomplete_ref_dependency.py
 !tests/gen_slice_deblock_offsets.py
+!tests/gen_gap_reference.py
 !tests/conformance_check.c
 !tests/conformance
 !tests/conformance/2d

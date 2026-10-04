@@ -1806,6 +1806,17 @@ int ADD_VARIANT(parse_slice_layer_without_partitioning)(Edge264MvcDecoder *dec, 
 	// check for gaps in frame_num (8.2.5.2)
 	int gap = dec->FrameNum - dec->PrevRefFrameNum[non_base_view];
 	if (__builtin_expect(gap > 1, 0)) {
+		// The frames inferred for the gap get the content of the latest short-term
+		// reference of this view, as in FFmpeg (zeros without one, as conceal_frame
+		// uses). They have no content of their own, so a damaged stream predicting
+		// from one otherwise read whatever the reused slot held, which depended on
+		// thread timing. Find it before the sliding window below may dereference it.
+		int prev = -1;
+		for (unsigned r = same_views & dec->prev_short_term_frames; r; r &= r - 1) {
+			int i = __builtin_ctz(r);
+			if (dec->samples_buffers[i] && (prev < 0 || dec->FrameIds[i] > dec->FrameIds[prev]))
+				prev = i;
+		}
 		// make enough non-reference slots by dereferencing short-term and non-existing frames
 		int sref_slots = sps->max_num_ref_frames - __builtin_popcount(same_views & dec->prev_long_term_frames & ~dec->prev_short_term_frames);
 		// A frame_num gap needs a short-term slot to hold the inferred
@@ -1875,6 +1886,27 @@ int ADD_VARIANT(parse_slice_layer_without_partitioning)(Edge264MvcDecoder *dec, 
 					sps->PicOrderCntDeltas[(FrameNum - 1) % sps->num_ref_frames_in_pic_order_cnt_cycle]);
 			}
 			dec->FieldOrderCnt[0][i] = dec->FieldOrderCnt[1][i] = PicOrderCnt;
+			// copy the samples once no task writes them (concealing an abandoned
+			// picture first), and make every macroblock intra for colocated reads
+			if (prev >= 0) {
+				while (__atomic_load_n(&dec->next_deblock_addr[prev], __ATOMIC_ACQUIRE) != INT_MAX &&
+					((writing_frames(dec) >> prev & 1) || !conceal_frame(dec, prev)))
+					progress_or_wait(dec);
+				if (prev != i)
+					memcpy(dec->samples_buffers[i], dec->samples_buffers[prev], dec->plane_size_Y + dec->plane_size_C);
+			} else {
+				memset(dec->samples_buffers[i], 0, dec->plane_size_Y + dec->plane_size_C);
+			}
+			Edge264MvcMacroblock *m = dec->mb_buffers[i];
+			int width = dec->sps.pic_width_in_mbs;
+			for (int row = 0; row < dec->sps.pic_height_in_mbs * (width + 1); row += width + 1) {
+				for (int x = row; x < row + width; x++) {
+					int8_t recovery_bits = m[x].recovery_bits;
+					m[x] = unavail_mb;
+					m[x].recovery_bits = recovery_bits;
+				}
+			}
+			prev = i;
 			dec->remaining_mbs[i] = 0;
 			__atomic_store_n(&dec->next_deblock_addr[i], INT_MAX, __ATOMIC_RELEASE);
 		}
