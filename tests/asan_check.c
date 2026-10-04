@@ -19,14 +19,10 @@
 // Self-contained: only edge264.h + libc. Usage: asan_check run <manifest> <dir>
 
 #include <errno.h>
-#include <fcntl.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/mman.h>
-#include <sys/stat.h>
-#include <unistd.h>
 
 #include "edge264mvc.h"
 
@@ -38,20 +34,21 @@
 // parsers (parse_sei_log); it deliberately does nothing with the strings.
 static void logcb(const char *s, void *a) { (void)s; (void)a; }
 
-static uint8_t *map_file(const char *path, size_t *size_out) {
-	int fd = open(path, O_RDONLY);
-	if (fd < 0)
+static uint8_t *load_file(const char *path, size_t *size_out) {
+	// read into memory rather than mmap, so that the harness builds on Windows too
+	FILE *f = fopen(path, "rb");
+	if (f == NULL)
 		return NULL;
-	struct stat st;
-	if (fstat(fd, &st) != 0 || st.st_size <= 0) {
-		close(fd);
-		return NULL;
+	uint8_t *m = NULL;
+	long size = 0;
+	if (fseek(f, 0, SEEK_END) == 0 && (size = ftell(f)) > 0 && fseek(f, 0, SEEK_SET) == 0 &&
+		(m = malloc(size)) != NULL && fread(m, 1, size, f) != (size_t)size) {
+		free(m);
+		m = NULL;
 	}
-	uint8_t *m = mmap(NULL, st.st_size, PROT_READ, MAP_SHARED, fd, 0);
-	close(fd);
-	if (m == MAP_FAILED)
-		return NULL;
-	*size_out = st.st_size;
+	fclose(f);
+	if (m != NULL)
+		*size_out = size;
 	return m;
 }
 
@@ -123,7 +120,7 @@ static int do_run(const char *manifest, const char *dir) {
 		char path[4096];
 		snprintf(path, sizeof(path), "%s/%s.264", dir, name);
 		size_t size = 0;
-		uint8_t *buf = map_file(path, &size);
+		uint8_t *buf = load_file(path, &size);
 		if (!buf) {
 			printf(RED "FAIL" RESET " %s (missing fixture)\n", name);
 			fclose(mf);
@@ -131,7 +128,7 @@ static int do_run(const char *manifest, const char *dir) {
 		}
 		// If a memory-safety regression is present, ASAN aborts here.
 		int badmsg = decode_all(buf, size);
-		munmap(buf, size);
+		free(buf);
 		if (badmsg < 0) {
 			printf(RED "FAIL" RESET " %s (stall: EDGE264MVC_AGAIN without progress)\n", name);
 			fclose(mf);

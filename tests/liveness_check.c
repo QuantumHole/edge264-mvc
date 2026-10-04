@@ -17,17 +17,16 @@
 // Usage: liveness_check run <manifest> <fixtures-dir>
 
 #include <errno.h>
-#include <fcntl.h>
-#include <signal.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/mman.h>
-#include <sys/stat.h>
+#ifndef _WIN32
+#include <signal.h>
 #include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
+#endif
 
 #include "edge264mvc.h"
 
@@ -48,20 +47,21 @@
 // finish in milliseconds, so this is orders of magnitude of slack.
 #define TIMEOUT_SEC 15
 
-static uint8_t *map_file(const char *path, size_t *size_out) {
-	int fd = open(path, O_RDONLY);
-	if (fd < 0)
+static uint8_t *load_file(const char *path, size_t *size_out) {
+	// read into memory rather than mmap, so that the harness builds on Windows too
+	FILE *f = fopen(path, "rb");
+	if (f == NULL)
 		return NULL;
-	struct stat st;
-	if (fstat(fd, &st) != 0 || st.st_size <= 0) {
-		close(fd);
-		return NULL;
+	uint8_t *m = NULL;
+	long size = 0;
+	if (fseek(f, 0, SEEK_END) == 0 && (size = ftell(f)) > 0 && fseek(f, 0, SEEK_SET) == 0 &&
+		(m = malloc(size)) != NULL && fread(m, 1, size, f) != (size_t)size) {
+		free(m);
+		m = NULL;
 	}
-	uint8_t *m = mmap(NULL, st.st_size, PROT_READ, MAP_SHARED, fd, 0);
-	close(fd);
-	if (m == MAP_FAILED)
-		return NULL;
-	*size_out = st.st_size;
+	fclose(f);
+	if (m != NULL)
+		*size_out = size;
 	return m;
 }
 
@@ -120,8 +120,12 @@ static int decode_count(const uint8_t *buf, size_t size) {
 // decoder deadlock (a NAL that never returns - which the in-process progress
 // guard cannot catch) is reported as a clean FAIL rather than hanging the suite.
 // Returns the child's frame count (>=0), -1 on stall/crash, or -2 on timeout
-// (deadlock). Falls back to an in-process decode if fork/pipe are unavailable.
+// (deadlock). Falls back to an in-process decode if fork/pipe are unavailable
+// (and on Windows, which has neither).
 static int decode_count_forked(const uint8_t *buf, size_t size) {
+#ifdef _WIN32
+	return decode_count(buf, size); // no fork on Windows: the caller's own time limit applies
+#else
 	int fds[2];
 	if (pipe(fds) != 0)
 		return decode_count(buf, size);
@@ -163,6 +167,7 @@ static int decode_count_forked(const uint8_t *buf, size_t size) {
 	waitpid(pid, &status, 0);
 	close(fds[0]);
 	return -2; // deadlock: the child never returned within the timeout
+#endif
 }
 
 static int do_run(const char *manifest, const char *dir) {
@@ -184,14 +189,14 @@ static int do_run(const char *manifest, const char *dir) {
 		char path[4096];
 		snprintf(path, sizeof(path), "%s/%s.264", dir, name);
 		size_t size = 0;
-		uint8_t *buf = map_file(path, &size);
+		uint8_t *buf = load_file(path, &size);
 		if (!buf) {
 			printf(RED "FAIL" RESET " %s (missing fixture)\n", name);
 			failed++;
 			continue;
 		}
 		int got = decode_count_forked(buf, size);
-		munmap(buf, size);
+		free(buf);
 		if (got == -2) {
 			printf(RED "FAIL" RESET " %s (deadlock: decode_NAL did not return within %ds)\n", name, TIMEOUT_SEC);
 			failed++;

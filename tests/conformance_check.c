@@ -21,15 +21,14 @@
 // dependency, so anyone who clones the repo can build and run it.
 
 #include <errno.h>
-#include <fcntl.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/mman.h>
-#include <sys/stat.h>
+#ifndef _WIN32
 #include <sys/wait.h>
 #include <unistd.h>
+#endif
 
 #include "edge264mvc.h"
 
@@ -191,31 +190,32 @@ static Result decode_all(const uint8_t *buf, size_t size, int paced) {
 	return r;
 }
 
-static uint8_t *map_file(const char *path, size_t *size_out) {
-	int fd = open(path, O_RDONLY);
-	if (fd < 0)
+static uint8_t *load_file(const char *path, size_t *size_out) {
+	// read into memory rather than mmap, so that the harness builds on Windows too
+	FILE *f = fopen(path, "rb");
+	if (f == NULL)
 		return NULL;
-	struct stat st;
-	if (fstat(fd, &st) != 0 || st.st_size <= 0) {
-		close(fd);
-		return NULL;
+	uint8_t *m = NULL;
+	long size = 0;
+	if (fseek(f, 0, SEEK_END) == 0 && (size = ftell(f)) > 0 && fseek(f, 0, SEEK_SET) == 0 &&
+		(m = malloc(size)) != NULL && fread(m, 1, size, f) != (size_t)size) {
+		free(m);
+		m = NULL;
 	}
-	uint8_t *m = mmap(NULL, st.st_size, PROT_READ, MAP_SHARED, fd, 0);
-	close(fd);
-	if (m == MAP_FAILED)
-		return NULL;
-	*size_out = st.st_size;
+	fclose(f);
+	if (m != NULL)
+		*size_out = size;
 	return m;
 }
 
 static Hash hash_whole_file(const char *path, int *found) {
 	Hash h = HASH_INIT;
 	size_t n = 0;
-	uint8_t *m = map_file(path, &n);
+	uint8_t *m = load_file(path, &n);
 	*found = m != NULL;
 	if (m) {
 		hash_bytes(&h, m, n);
-		munmap(m, n);
+		free(m);
 	}
 	return h;
 }
@@ -231,13 +231,13 @@ static int do_emit(const char *dir, const char *name, int paced) {
 	char path[4096];
 	snprintf(path, sizeof(path), "%s/%s.264", dir, name);
 	size_t size = 0;
-	uint8_t *buf = map_file(path, &size);
+	uint8_t *buf = load_file(path, &size);
 	if (!buf) {
 		fprintf(stderr, "cannot open %s\n", path);
 		return 1;
 	}
 	Result r = decode_all(buf, size, paced);
-	munmap(buf, size);
+	free(buf);
 
 	const char *check = "NOREF";
 	int found;
@@ -291,6 +291,17 @@ static const char *check_result(const Result *r, int frames, int stereo, const c
 // the reason (empty = pass), returns 0 on a clean run, -1 if the child aborted.
 static int run_paced_forked(const uint8_t *buf, size_t size, int frames, int stereo,
                             const char *hb, const char *hd, char *out, size_t outsz) {
+#ifdef _WIN32
+	// no fork on Windows: decode in-process, an abort then ends the whole run
+	out[0] = '\0';
+	for (int pass = 0; pass <= 1 && out[0] == '\0'; pass++) {
+		Result r = decode_all(buf, size, pass);
+		const char *w = check_result(&r, frames, stereo, hb, hd);
+		if (w)
+			snprintf(out, outsz, "%s [%s]", w, pass ? "paced" : "aggressive");
+	}
+	return 0;
+#else
 	int pipefd[2];
 	out[0] = '\0';
 	if (pipe(pipefd) != 0) { snprintf(out, outsz, "pipe() failed"); return 0; }
@@ -323,6 +334,7 @@ static int run_paced_forked(const uint8_t *buf, size_t size, int frames, int ste
 	}
 	snprintf(out, outsz, "%s", msg);
 	return 0;
+#endif
 }
 
 // run MODE: read the manifest, decode each committed fixture from <dir>,
@@ -330,15 +342,15 @@ static int run_paced_forked(const uint8_t *buf, size_t size, int frames, int ste
 // suite-level failure count so `make check` fails loudly. Needs no
 // reference YUVs - fully offline.
 static int do_run(const char *manifest, const char *dir) {
-	// Map the whole manifest and drop its file descriptor before decoding any
-	// fixture. A paced fixture is decoded in a forked child that calls exit(),
-	// which would flush an inherited manifest stdio stream and reposition the
-	// shared file offset - corrupting the parent's next line read (it gets parsed
-	// mid-token and reported as a missing fixture). map_file closes the fd right
-	// after mmap, so no handle is open across the fork and fixtures may appear in
-	// any manifest order, not only before the paced ones.
+	// Load the whole manifest and close it before decoding any fixture. A paced
+	// fixture is decoded in a forked child that calls exit(), which would flush
+	// an inherited manifest stdio stream and reposition the shared file offset -
+	// corrupting the parent's next line read (it gets parsed mid-token and
+	// reported as a missing fixture). load_file closes the file before returning,
+	// so no handle is open across the fork and fixtures may appear in any
+	// manifest order, not only before the paced ones.
 	size_t msize = 0;
-	uint8_t *mtext = map_file(manifest, &msize);
+	uint8_t *mtext = load_file(manifest, &msize);
 	if (!mtext) {
 		fprintf(stderr, "cannot open manifest %s\n", manifest);
 		return 1;
@@ -366,7 +378,7 @@ static int do_run(const char *manifest, const char *dir) {
 		char path[4096];
 		snprintf(path, sizeof(path), "%s/%s.264", dir, name);
 		size_t size = 0;
-		uint8_t *buf = map_file(path, &size);
+		uint8_t *buf = load_file(path, &size);
 		if (!buf) {
 			printf(RED "FAIL" RESET " %s (missing fixture)\n", name);
 			failed++;
@@ -388,14 +400,14 @@ static int do_run(const char *manifest, const char *dir) {
 			if (w)
 				snprintf(why, sizeof why, "%s", w);
 		}
-		munmap(buf, size);
+		free(buf);
 
 		if (why[0]) {
 			printf(RED "FAIL" RESET " %s (%s)\n", name, why);
 			failed++;
 		}
 	}
-	munmap(mtext, msize);
+	free(mtext);
 	if (failed)
 		printf("\n" RED "%d / %d conformance fixtures FAILED" RESET "\n", failed, total);
 	else
@@ -411,7 +423,7 @@ static int do_probe(const char *dir, const char *name) {
 	char path[4096];
 	snprintf(path, sizeof(path), "%s/%s.264", dir, name);
 	size_t size = 0;
-	uint8_t *buf = map_file(path, &size);
+	uint8_t *buf = load_file(path, &size);
 	if (!buf) {
 		fprintf(stderr, "cannot open %s\n", path);
 		return 1;
@@ -423,7 +435,7 @@ static int do_probe(const char *dir, const char *name) {
 			(unsigned long long)r.base.a, (unsigned long long)r.base.b,
 			(unsigned long long)r.dep.a, (unsigned long long)r.dep.b);
 	}
-	munmap(buf, size);
+	free(buf);
 	return 0;
 }
 
