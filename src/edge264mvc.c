@@ -356,6 +356,27 @@ static void free_decoder(Edge264MvcDecoder **pdec) {
 static void unblock_output(Edge264MvcDecoder *dec) {
 	for (int v = 0; v < 2; v++)
 		while (__builtin_ctz(movemask(dec->get_frame_queue_v[v]) | 1 << 16) < 16 && bump_frame(dec, v, 0));
+	// A dependent view is queued only after its base view, so one whose base
+	// view is missing never reaches the queue, where get_frame drops such
+	// orphans - and enough of them keep the gate closed forever. Drop them here
+	// (the tasks are finished, see output_stalled), except the picture being
+	// parsed, whose base view may still be sent.
+	unsigned live_bases = dec->to_get_frames & ~dec->non_base_frames;
+	for (unsigned o = dec->to_get_frames & ~dec->output_frames & dec->non_base_frames; o; o &= o - 1) {
+		int d = __builtin_ctz(o);
+		if (d == dec->currPic)
+			continue;
+		int has_base = 0;
+		for (unsigned b = live_bases; b; b &= b - 1) {
+			int i = __builtin_ctz(b);
+			if (dec->FrameNums[i] == dec->FrameNums[d] && dec->FieldOrderCnt[0][i] == dec->FieldOrderCnt[0][d]) {
+				has_base = 1;
+				break;
+			}
+		}
+		if (!has_base)
+			dec->to_get_frames &= ~(1u << d);
+	}
 	dec->flushing = 1; // cleared by the next NAL that passes the gate
 }
 

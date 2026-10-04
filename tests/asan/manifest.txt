@@ -18,4 +18,5 @@ mvc_subset_sps_size
 mvc_dpb_full_unpaired
 output_queue_full
 mvc_conceal_later_base
+mvc_orphan_dependents_gate
 poc_overflow

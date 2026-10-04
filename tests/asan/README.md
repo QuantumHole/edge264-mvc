@@ -153,6 +153,15 @@ guard against sanitizer aborts and CPU-burn.
   needs every worker blocked at once, so `make check-robustness` also runs the
   fixtures with exactly four worker threads, where it hangs before the fix.
   conceal_frame now only takes a base decoded before the damaged picture.
+- mvc_orphan_dependents_gate.264: a fuzzer-found MVC stream that leaves more
+  dependent views without a base view waiting for output than the dependent
+  view's output queue holds, while the picture being parsed sits incomplete in
+  the base view's queue. A dependent view is queued only after its base view,
+  so these were never queued (get_frame drops orphans only from the queue), the
+  output queue gate in decode_nal stayed closed, and the slices that would
+  complete the picture being parsed were refused - EDGE264MVC_AGAIN forever.
+  When the caller holds no frame and a round brought none, the gate's valve
+  (unblock_output) now also drops these unqueued orphan dependent views.
 - poc_overflow.264: a fuzzer-found stream whose slice header carries a
   delta_pic_order_cnt_bottom near -2^31. The picture order count derivation
   added it to the top field's count in int, which overflows - undefined
