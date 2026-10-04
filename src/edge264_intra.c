@@ -63,12 +63,11 @@
 		return v;
 	}
 	static i8x16 ldedge4x4(const uint8_t *p, size_t stride) {
-		i8x16 v = loadu128(p - 5 - stride);
-		v[3] = *(p -= 1);
-		v[2] = *(p += stride);
-		v[1] = *(p += stride);
-		v[0] = *(p + stride);
-		return v;
+		// Only the top-left and the 4 top samples: the samples beyond them belong
+		// to the macroblock above-right, which another slice of the picture may be
+		// decoding meanwhile (a data race, even if those lanes were discarded).
+		const uint8_t *t = p - stride;
+		return (i8x16){p[stride * 3 - 1], p[stride * 2 - 1], p[stride - 1], p[-1], t[-1], t[0], t[1], t[2], t[3]};
 	}
 	static i8x16 ldleft8x8(const uint8_t *p, size_t stride, i8x16 v0) {
 		v0[1] = *(p -= 1);
@@ -140,12 +139,11 @@
 		return v;
 	}
 	static i8x16 ldedge4x4(const uint8_t *p, size_t stride) {
-		i8x16 v = loadu128(p - stride - 5);
-		v[3] = p[-1];
-		v[2] = p[stride - 1];
-		v[1] = p[stride * 2 - 1];
-		v[0] = p[stride * 3 - 1];
-		return v;
+		// Only the top-left and the 4 top samples: the samples beyond them belong
+		// to the macroblock above-right, which another slice of the picture may be
+		// decoding meanwhile (a data race, even if those lanes were discarded).
+		const uint8_t *t = p - stride;
+		return (i8x16){p[stride * 3 - 1], p[stride * 2 - 1], p[stride - 1], p[-1], t[-1], t[0], t[1], t[2], t[3]};
 	}
 	static i8x16 ldleft8x8(const uint8_t *p, size_t stride, i8x16 v) {
 		const uint8_t *p0 = p - 1;
@@ -214,7 +212,11 @@
 		return shr128(ziplo16(v0, v1), 12);
 	}
 	static i8x16 ldedge4x4(const uint8_t *p, size_t stride) {
-		i8x16 v0 = loadu64(p - stride     - 1);
+		// Only the top-left and the 4 top samples: the samples beyond them belong
+		// to the macroblock above-right, which another slice of the picture may be
+		// decoding meanwhile (a data race, even if those lanes were discarded).
+		i8x16 v0 = (i8x16)loadu32(p - stride - 1);
+		v0[4] = p[3 - stride];
 		i8x16 v1 = loada32(p              - 4);
 		i8x16 v2 = loada32(p + stride     - 4);
 		i8x16 v3 = loada32(p + stride * 2 - 4);
