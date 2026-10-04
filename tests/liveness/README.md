@@ -96,8 +96,8 @@ multithreaded (`EDGE264MVC_THREADS=8` and `-1`), where these deadlocks surface.
   decoder spins ENOBUFS *mid-stream* (before end-of-stream, so the end-of-stream
   forward-progress valve cannot mask it - the decoder delivers 0 frames). The fix ignores
   the trailing slop on a slice whose CurrMbAddr reached the picture end, so all 24 are
-  delivered. ffmpeg decodes them too. Found on a real 4K capture (VR Inferno.mp4) whose
-  4-slice CABAC frames hit this on ~29 of their final slices. Regresses the cabac
+  delivered. ffmpeg decodes them too. Found on a real 4K capture whose
+  4-slice CABAC frames hit this on some of their final slices. Regresses the cabac
   end-of-slice over-read tolerance (edge264mvc_headers.c worker_loop) => mid-stream stall.
 
 - cabac_orphan.264: an IDR followed by 23 pictures (synthetic CABAC,
@@ -112,7 +112,7 @@ multithreaded (`EDGE264MVC_THREADS=8` and `-1`), where these deadlocks surface.
   but no longer queued), it made bump_all_frames return ENOBUFS forever at end-of-stream:
   the decoder delivered 23 of 24 and stalled. The fix finalizes and re-queues such an orphan
   so the drain terminates and all 24 are delivered - ffmpeg likewise conceals and emits the
-  damaged picture. Found on a real corrupt broadcast capture (3sat HD .ts, 2474/2475).
+  damaged picture. Found on a real corrupt broadcast capture.
   Regresses the flush-drain orphan recovery (edge264mvc_headers.c bump_all_frames) => stall
   losing the last picture.
 
@@ -137,8 +137,8 @@ multithreaded (`EDGE264MVC_THREADS=8` and `-1`), where these deadlocks surface.
   used to reject a non-1 padding with EBADMSG and decode 0 macroblocks; the undelivered pictures
   then piled up until the DPB overflowed into a mid-stream stall. The fix accepts the byte-aligned
   position regardless, so every picture decodes (the CABAC data is byte-aligned and valid). Found
-  on a real Extended-profile capture (x264.avi) whose every slice was rejected: edge264 stalled at
-  0 frames, now decodes all 2209 byte-identical to ffmpeg. Regresses the cabac_alignment leniency
+  on a real Extended-profile capture whose every slice was rejected: edge264 stalled at
+  0 frames, now decodes every picture like ffmpeg. Regresses the cabac_alignment leniency
   (edge264mvc_bitstream.c cabac_start) => mid-stream stall delivering 0 frames.
 
 - mvc_baseless_dependent.264: a subset SPS (NAL type 15) plus 18 inter-coded dependent-view

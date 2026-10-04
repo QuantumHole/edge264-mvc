@@ -77,7 +77,7 @@ cabac_overread 24
 # bump_all_frames spin ENOBUFS forever at end-of-stream, so the decoder delivered
 # 23 of 24 and stalled. The fix finalizes and re-queues the orphan so all 24 come
 # out (ffmpeg conceals + emits the damaged picture too). Found on a real corrupt
-# broadcast capture (3sat HD .ts, 2474/2475). Regression (flush-drain orphan
+# broadcast capture. Regression (flush-drain orphan
 # recovery) => stall losing the last picture.
 cabac_orphan 24
 # cabac_misalign: 24 single-MB I_PCM pictures (synthetic CABAC, gen_cabac_misalign.py)
@@ -87,8 +87,8 @@ cabac_orphan 24
 # the undelivered pictures then piled up until the DPB overflowed into a mid-stream
 # stall. The fix accepts the byte-aligned position regardless, so every picture
 # decodes (the CABAC data is byte-aligned and valid). Found on a real Extended-profile
-# capture (x264.avi) whose every slice was rejected (STALL;0 -> 2209 = ffmpeg,
-# byte-identical). Regression (cabac_alignment leniency) => mid-stream stall, 0 frames.
+# capture whose every slice was rejected (a stall at 0 frames; it now decodes like
+# ffmpeg). Regression (cabac_alignment leniency) => mid-stream stall, 0 frames.
 cabac_misalign 24
 # mvc_orphan_dependent: a 2-access-unit MVC stream (gen_avc.py) whose second access
 # unit carries only the dependent view (NAL type 20); its base view is absent (a

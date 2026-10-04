@@ -5,7 +5,7 @@
 # byte-aligns and starts the arithmetic engine. the decoder's cabac_start used to
 # reject a non-1 padding (EBADMSG, 0 macroblocks decoded); the undelivered
 # pictures then piled up until the DPB overflowed into a mid-stream stall (found
-# on a real Extended-profile capture, x264.avi, every slice rejected -> STALL;0).
+# on a real Extended-profile capture, every slice was rejected -> stall, 0 frames).
 # The fix accepts the byte-aligned position regardless, so all pictures decode.
 #
 # 24 single-MB I_PCM pictures (minimal CABAC, since tests/gen_avc.py is CAVLC
