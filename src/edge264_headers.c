@@ -1864,11 +1864,18 @@ int ADD_VARIANT(parse_slice_layer_without_partitioning)(Edge264Decoder *dec, Edg
 	
 	// find and possibly allocate a memory slot for the upcoming frame
 	if (dec->currPic < 0) {
-		unsigned reference_frames = dec->prev_short_term_frames | dec->prev_long_term_frames;
+		// MVC: prevent dependent view from aliasing the base view's DPB slot,
+		// since the dependent view references the base view's pixels for
+		// inter-view prediction and would corrupt them by overwriting. Count it
+		// as taken from the start, since a slot found free only before excluding
+		// it left no slot at all (and a slot index past the DPB).
+		unsigned reference_frames = dec->prev_short_term_frames | dec->prev_long_term_frames |
+			(non_base_view && dec->basePic >= 0 ? 1u << dec->basePic : 0);
 		while (__builtin_popcount(reference_frames | dec->to_get_frames | dec->output_frames) == 32) {
 			if (!output_stalled(dec) || make_room(dec, non_base_view))
 				return ENOBUFS; // exit here if we must wait for get_frame to consume and return a frame slot
-			reference_frames = dec->prev_short_term_frames | dec->prev_long_term_frames;
+			reference_frames = dec->prev_short_term_frames | dec->prev_long_term_frames |
+				(non_base_view && dec->basePic >= 0 ? 1u << dec->basePic : 0);
 		}
 		// wait until at least one empty slot is undepended and not written by an
 		// in-flight task (or returned in the meantime). inflight_frames matters
@@ -1879,11 +1886,6 @@ int ADD_VARIANT(parse_slice_layer_without_partitioning)(Edge264Decoder *dec, Edg
 		unsigned unavail;
 		while (__builtin_popcount(unavail = reference_frames | dec->to_get_frames | dec->output_frames | depended_frames(dec) | inflight_frames(dec)) >= 32)
 			progress_or_wait(dec);
-		// MVC: prevent dependent view from aliasing the base view's DPB slot,
-		// since the dependent view references the base view's pixels for
-		// inter-view prediction and would corrupt them by overwriting.
-		if (non_base_view && dec->basePic >= 0)
-			unavail |= 1u << dec->basePic;
 		int currPic = __builtin_ctz(~unavail);
 		if (dec->samples_buffers[currPic] == NULL &&
 			(ret = alloc_frame(dec, currPic, currPic <= sps->max_dec_frame_buffering ? ENOMEM : ENOBUFS)))
