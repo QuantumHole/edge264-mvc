@@ -2,8 +2,8 @@
  * Every file should be compilable on its own by including this file.
  */
 
-#ifndef edge264mvc_COMMON_H
-#define edge264mvc_COMMON_H
+#ifndef EDGE264MVC_INTERNAL_H
+#define EDGE264MVC_INTERNAL_H
 
 #include <assert.h>
 #include <errno.h>

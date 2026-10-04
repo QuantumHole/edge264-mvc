@@ -438,7 +438,7 @@ check-conformance-trace: conformance_check$(EXE)
 # single-thread output, and a stall would fail here by timeout. Skipped on wasm
 # (single-threaded runtime). The EDGE264MVC_THREADS=-1 pass also exercises the
 # auto-detect (logical-core) spawn+teardown path: it must persist its resolved
-# count so edge264mvc_free joins every worker before freeing (a -1 left in
+# count so edge264mvc_close joins every worker before freeing (a -1 left in
 # dec->n_threads skips the join -> teardown access violation, esp. on Windows).
 .PHONY: check-conformance-mt
 check-conformance-mt: conformance_check$(EXE)

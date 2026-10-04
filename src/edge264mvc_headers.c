@@ -2588,7 +2588,7 @@ static int parse_seq_parameter_set_mvc_extension(Edge264MvcDecoder *dec, int pro
 
 
 /**
- * Parses the SPS into a edge264mvc_parameter_set structure, then saves it if a
+ * Parses the SPS into an Edge264MvcSeqParameterSet, then saves it if a
  * rbsp_trailing_bits pattern follows.
  */
 int ADD_VARIANT(parse_seq_parameter_set)(Edge264MvcDecoder *dec, Edge264MvcUnrefCb unref_cb, void *unref_arg)
