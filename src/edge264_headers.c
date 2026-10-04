@@ -246,11 +246,20 @@ static void flush_frames(Edge264Decoder *dec) {
 
 static int alloc_frame(Edge264Decoder *dec, int id, int errno_on_fail) {
 	int mbs = (dec->sps.pic_width_in_mbs + 1) * dec->sps.pic_height_in_mbs - 1;
+	// The neighbours of the top row (B, C, D, up to pic_width_in_mbs + 2
+	// macroblocks back) are read before their availability masks them out, so
+	// they need memory of their own: a row of unavailable macroblocks before
+	// the picture's. Without it those reads fell on the end of the samples, which
+	// the slices decoding the bottom of the picture write meanwhile.
+	int guard = dec->sps.pic_width_in_mbs + 2;
 	unsigned samples_size = (dec->plane_size_Y + dec->plane_size_C + 16 + 63) & -64; // plus margin for overreads, and cache line alignment of mbs
-	unsigned mbs_size = sizeof(Edge264Macroblock) * mbs;
+	unsigned mbs_size = sizeof(Edge264Macroblock) * (guard + mbs);
 	dec->alloc_cb((void **)&dec->samples_buffers[id], samples_size, (void **)&dec->mb_buffers[id], mbs_size, errno_on_fail, dec->alloc_arg);
 	Edge264Macroblock *m = dec->mb_buffers[id];
 	if (dec->samples_buffers[id] && m) {
+		for (int i = 0; i < guard; i++)
+			m[i] = unavail_mb;
+		m = dec->mb_buffers[id] = m + guard;
 		for (int i = 0; i < mbs; i += dec->sps.pic_width_in_mbs + 1) {
 			for (int j = i; j < i + dec->sps.pic_width_in_mbs; j++)
 				m[j].recovery_bits = 0;
