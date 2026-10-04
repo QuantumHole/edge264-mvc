@@ -29,7 +29,7 @@ Measured on an 8-core / 16-thread laptop CPU, by running the old and new build s
 
 ## MVC / stereo correctness
 
-The reason this project exists:
+The reason this project exists. Tested on complete commercial 3D Blu-ray films, from animation to live action - more than 15 hours of 3D video - without a single pairing or ordering error, single- and multithreaded:
 
 | Fix | Source |
 |---|---|
