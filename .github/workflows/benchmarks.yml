@@ -26,11 +26,20 @@ jobs:
         run: wget -q -O - "https://test-videos.co.uk/vids/bigbuckbunny/mp4/h264/1080/Big_Buck_Bunny_1080_10s_30MB.mp4" | ffmpeg -i - -vcodec copy -bsf h264_mp4toannexb -an video.264
       - run: |
           make STATIC=yes
-          mv edge264_test edge264_test-gcc
+          mv edge264mvc_test edge264mvc_test-gcc
       - run: |
           make clear
           make STATIC=yes CC=clang
-          mv edge264_test edge264_test-clang
+          mv edge264mvc_test edge264mvc_test-clang
+      # stock edge264 at a fixed commit, so that the figure compares against a
+      # known version; it is timed single-threaded only, as its experimental
+      # multithreading hangs on these streams
+      - run: |
+          git init -q edge264-stock
+          git -C edge264-stock fetch -q --depth=1 https://github.com/tvlabs/edge264.git 2c2ab95d63c1ad89c5687f9e50b57cad772c871b
+          git -C edge264-stock checkout -q FETCH_HEAD
+          make -C edge264-stock STATIC=yes
+          mv edge264-stock/edge264_test edge264_test-stock
       - run: |
           git clone --depth=1 https://github.com/cisco/openh264.git
           make -C openh264

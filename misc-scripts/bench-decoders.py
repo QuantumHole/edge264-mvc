@@ -5,13 +5,15 @@ from subprocess import run
 from timeit import timeit
 
 if not(len(sys.argv) == 3 and
-       which("edge264_test-gcc") and
-       which("edge264_test-clang") and
+       which("edge264mvc_test-gcc") and
+       which("edge264mvc_test-clang") and
+       which("edge264_test-stock") and
        which("ffmpeg") and
        which("avcdec") and
        which("h264dec")):
 	print(f"Usage: {sys.argv[0]} <video.264> <nb_runs>\n" +
-		"PATH must contain the paths to edge264_test-gcc, edge264_test-clang, ffmpeg,\n" +
+		"PATH must contain the paths to edge264mvc_test-gcc, edge264mvc_test-clang,\n" +
+		"edge264_test-stock (the original edge264), ffmpeg,\n" +
 		"avcdec and h264dec")
 	exit(1)
 
@@ -19,9 +21,10 @@ ncores = os.cpu_count() or 1
 
 # Every decoder that supports multithreading is timed both single-threaded (1T)
 # and multithreaded (MT, all cores), so the comparison is fair at both ends:
-# edge264 via -sby/-mby, ffmpeg via -threads 1 vs 0 (auto frame threading),
+# edge264-mvc via -sby/-mby, ffmpeg via -threads 1 vs 0 (auto frame threading),
 # avcdec via --num_cores 1 vs N. OpenH264's decoder has no multithreading, so it
-# is timed once. All numbers are wall-clock seconds: edge264 prints "time:",
+# is timed once, and the original edge264 (stock) is timed single-threaded only,
+# since its experimental multithreading hangs on these streams. All numbers are wall-clock seconds: edge264-mvc prints "time:",
 # ffmpeg's -benchmark prints rtime (real time; utime would sum per-thread CPU and
 # hide the MT speedup), and avcdec is wrapped in a wall-clock timer. Pull values
 # by name rather than a fixed offset so the parse stays robust.
@@ -52,14 +55,15 @@ def libavc_time(cores):
 def openh264_time():
 	return float(run(["h264dec", sys.argv[1]], capture_output=True).stderr.split(b"\n")[6].split()[2])
 
-cols = ["edge264-mvc-GCC-1T", "edge264-mvc-GCC-MT", "edge264-mvc-Clang-1T", "edge264-mvc-Clang-MT",
+cols = ["edge264-mvc-GCC-1T", "edge264-mvc-GCC-MT", "edge264-mvc-Clang-1T", "edge264-mvc-Clang-MT", "edge264-GCC-1T",
 	"FFmpeg-1T", "FFmpeg-MT", "LibAVC-1T", "LibAVC-MT", "OpenH264"]
 samples = {c: [] for c in cols}
 for _ in range(int(sys.argv[2])):
-	samples["edge264-mvc-GCC-1T"].append(edge264_time("edge264_test-gcc", "-sby"))
-	samples["edge264-mvc-GCC-MT"].append(edge264_time("edge264_test-gcc", "-mby"))
-	samples["edge264-mvc-Clang-1T"].append(edge264_time("edge264_test-clang", "-sby"))
-	samples["edge264-mvc-Clang-MT"].append(edge264_time("edge264_test-clang", "-mby"))
+	samples["edge264-mvc-GCC-1T"].append(edge264_time("edge264mvc_test-gcc", "-sby"))
+	samples["edge264-mvc-GCC-MT"].append(edge264_time("edge264mvc_test-gcc", "-mby"))
+	samples["edge264-mvc-Clang-1T"].append(edge264_time("edge264mvc_test-clang", "-sby"))
+	samples["edge264-mvc-Clang-MT"].append(edge264_time("edge264mvc_test-clang", "-mby"))
+	samples["edge264-GCC-1T"].append(edge264_time("edge264_test-stock", "-by"))
 	samples["FFmpeg-1T"].append(ffmpeg_time(1))
 	samples["FFmpeg-MT"].append(ffmpeg_time(0))
 	samples["LibAVC-1T"].append(libavc_time(1))
