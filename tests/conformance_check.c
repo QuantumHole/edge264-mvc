@@ -117,6 +117,11 @@ static void account_frame(Result *r, const Edge264MvcFrame *f, int64_t *prev_dis
 // condition a real player (e.g. one frame consumed per vsync) creates and under
 // which the MVC view-pairing shortcut used to drop the IDR's dependent view.
 // Both models must yield identical output from a correct decoder.
+static volatile size_t trace_bytes;
+static void discard_line(const char *line, void *arg) {
+	trace_bytes += strlen(line);
+}
+
 static Result decode_all(const uint8_t *buf, size_t size, int paced) {
 	Result r = {0};
 	r.base = HASH_INIT;
@@ -129,6 +134,13 @@ static Result decode_all(const uint8_t *buf, size_t size, int paced) {
 	Edge264MvcSettings settings;
 	edge264mvc_default_settings(&settings);
 	settings.n_threads = threads < 0 ? 0 : threads == 0 ? 1 : threads;
+	// EDGE264_TRACE=1 also formats the header trace, which must not change the
+	// output (2 adds every macroblock)
+	const char *trace = getenv("EDGE264_TRACE");
+	if (trace && atoi(trace) > 0) {
+		settings.log_cb = discard_line;
+		settings.log_mbs = atoi(trace) > 1;
+	}
 	Edge264MvcDecoder *dec;
 	if (edge264mvc_open(&dec, &settings) != EDGE264MVC_OK) {
 		r.decode_err++;

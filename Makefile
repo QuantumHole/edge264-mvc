@@ -422,7 +422,14 @@ edge264_check$(EXE): src/edge264_check.c edge264mvc.h src/edge264_internal.h $(L
 check-conformance: conformance_check$(EXE)
 	$(Q)./conformance_check$(EXE) run tests/conformance/manifest.txt tests/conformance
 	$(Q)$(MAKE) --no-print-directory check-conformance-mt
+	$(Q)$(MAKE) --no-print-directory check-conformance-trace
 	$(Q)$(MAKE) --no-print-directory check-liveness
+
+# The same fixtures with the header trace on (a log callback that discards the
+# lines): formatting the trace must neither abort nor change the output.
+.PHONY: check-conformance-trace
+check-conformance-trace: conformance_check$(EXE)
+	$(Q)EDGE264_TRACE=1 ./conformance_check$(EXE) run tests/conformance/manifest.txt tests/conformance
 
 # Multithreaded bit-exactness: decode the same fixtures with background worker
 # threads and assert the per-view hashes still equal the (single-thread / ITU

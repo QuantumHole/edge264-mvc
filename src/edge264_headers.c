@@ -887,14 +887,6 @@ void *ADD_VARIANT(worker_loop)(void *arg) {
  */
 static void parse_dec_ref_pic_marking(Edge264Decoder *dec, Edge264SeqParameterSet *sps)
 {
-	static const char * const mmco_names[6] = {
-		"  - {mmco: 1, sref: %u} # dereference\n",
-		"  - {mmco: 2, lref: %2$u} # dereference\n",
-		"  - {mmco: 3, sref: %u, lref: %u} # convert\n",
-		"  - {mmco: 4, lref: %2$d} # dereference on and above\n",
-		"  - {mmco: 5} # dereference all\n",
-		"  - {mmco: 6, lref: %2$u} # convert current\n"};
-	
 	// no_output_of_prior_pics_flag is easier to support than to signal unsupported
 	if (dec->IdrPicFlag) {
 		int no_output_of_prior_pics_flag = get_u1(&dec->gb);
@@ -964,8 +956,16 @@ static void parse_dec_ref_pic_marking(Edge264Decoder *dec, Edge264SeqParameterSe
 				dec->FieldOrderCnt[1][dec->currPic] = dec->BottomFieldOrderCnt - tempPicOrderCnt;
 				while (bump_frame(dec, dec->nal_unit_type == 20, 1u << dec->currPic));
 			}
-			log_dec(dec, mmco_names[memory_management_control_operation - 1],
-				FrameNum, long_term_frame_idx);
+			// one format per operation, since a format may not skip an argument
+			// with %2$ (glibc's fortified printf aborts on it)
+			switch (memory_management_control_operation) {
+			case 1: log_dec(dec, "  - {mmco: 1, sref: %u} # dereference\n", FrameNum); break;
+			case 2: log_dec(dec, "  - {mmco: 2, lref: %u} # dereference\n", long_term_frame_idx); break;
+			case 3: log_dec(dec, "  - {mmco: 3, sref: %u, lref: %u} # convert\n", FrameNum, long_term_frame_idx); break;
+			case 4: log_dec(dec, "  - {mmco: 4, lref: %d} # dereference on and above\n", long_term_frame_idx); break;
+			case 5: log_dec(dec, "  - {mmco: 5} # dereference all\n"); break;
+			case 6: log_dec(dec, "  - {mmco: 6, lref: %u} # convert current\n", long_term_frame_idx); break;
+			}
 		}
 	}
 	
