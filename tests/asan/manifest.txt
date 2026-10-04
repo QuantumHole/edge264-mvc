@@ -14,3 +14,4 @@ unaligned_loads
 reader_overrun
 subpartition_neighbours
 mvc_format_change_unpaired
+mvc_subset_sps_size

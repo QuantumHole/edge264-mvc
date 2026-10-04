@@ -1479,6 +1479,12 @@ int ADD_VARIANT(parse_slice_layer_without_partitioning)(Edge264Decoder *dec, Edg
 	t->pps = dec->PPS[pic_parameter_set_id];
 	if (!sps->BitDepth_Y || !t->pps.num_ref_idx_active[0])
 		return print_dec(dec, "  decode_NAL_result: %s\n", EBADMSG); // exit now if SPS or PPS wasn't initialized
+	// Frame buffers are sized from the base SPS (alloc_frame), and every view of
+	// MVC has the frame size of the base view. A subset SPS of another size made
+	// a format change that cleared the base SPS, after which dependent slices
+	// allocated frames from its zero size (-1 macroblocks, i.e. 4 GB).
+	if (sps->pic_width_in_mbs != dec->sps.pic_width_in_mbs || sps->pic_height_in_mbs != dec->sps.pic_height_in_mbs)
+		return print_dec(dec, "  decode_NAL_result: %s\n", EBADMSG);
 	// first_mb_in_slice must address a macroblock inside the current picture
 	// (7.4.3: 0..PicSizeInMbs-1). An out-of-range value sets CurrMbAddr (and the
 	// derived mb/sample pointers in initialize_context) past the frame, so the

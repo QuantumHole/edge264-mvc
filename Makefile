@@ -479,7 +479,7 @@ endif
 # fixtures uninstrumented (the OOB read is then a benign, undetected read).
 .PHONY: check-asan
 check-asan: asan_check$(EXE)
-	$(Q)ASAN_OPTIONS=detect_leaks=0 timeout 90 ./asan_check$(EXE) run tests/asan/manifest.txt tests/asan
+	$(Q)ASAN_OPTIONS=detect_leaks=0:max_allocation_size_mb=2048 timeout 90 ./asan_check$(EXE) run tests/asan/manifest.txt tests/asan
 
 asan_check$(EXE): tests/asan_check.c edge264.h $(LIBNAME)
 	$(Q)$(CCLD) -I. tests/asan_check.c $(CPPFLAGS) $(CFLAGS) $(EXEFLAGS) -o $@

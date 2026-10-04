@@ -120,3 +120,11 @@ guard against sanitizer aborts and CPU-burn.
   the SPS returned ENOBUFS without any frame to drain, forever. The format
   change now sets the same flushing valve as an end_of_seq. The harness
   reports the stall.
+- mvc_subset_sps_size.264: a fuzzer-found MVC stream whose subset SPS declares
+  another frame size than the base SPS. That counted as a format change, which
+  cleared the base SPS, and the dependent-view slices that followed allocated
+  their frames from its zero size: (0 + 1) * 0 - 1 = -1 macroblocks, i.e. a
+  4 GB allocation (reported as allocation-size-too-big, since check-asan caps
+  single allocations at 2 GB). Every view of MVC has the frame size of the base
+  view, so a dependent slice whose subset SPS does not match the base SPS is
+  now rejected as damaged.
