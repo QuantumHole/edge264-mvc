@@ -19,7 +19,7 @@
 	#include <sys/types.h>
 	#include <unistd.h>
 #endif
-#include "edge264_internal.h"
+#include "edge264mvc_internal.h"
 
 
 
@@ -147,7 +147,7 @@ static int y4m_started = 0; // whether the Y4M stream header was written (per fi
 static FILE *msg; // human-readable output: stdout normally, stderr while dumping YUV to stdout
 static const char *moveup = "";
 FILE *trace_file = NULL;
-static Edge264Decoder *d;
+static Edge264MvcDecoder *d;
 static void trace_line(const char *line, void *file) { fputs(line, file); }
 static Edge264MvcFrame out;
 static int holding_out; // out was received and is not released yet
@@ -216,7 +216,7 @@ static int draw_frame()
 		mvc_display = has_second_view;
 		if (window == NULL) {
 			SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS);
-			window = SDL_CreateWindow("edge264_test", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, width, height, SDL_WINDOW_SHOWN | SDL_WINDOW_BORDERLESS);
+			window = SDL_CreateWindow("edge264mvc_test", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, width, height, SDL_WINDOW_SHOWN | SDL_WINDOW_BORDERLESS);
 			renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
 		} else {
 			SDL_SetWindowSize(window, width, height);
@@ -393,7 +393,7 @@ static int keep_decoding(int res)
 {
 	// -k: mirror a real player's decode loop by skipping an unsupported NAL
 	// (ENOTSUP) and continuing, instead of stopping at the first one. Real 3D
-	// Blu-rays carry per-access-unit unspecified NALs (type 24) that edge264
+	// Blu-rays carry per-access-unit unspecified NALs (type 24) that edge264-mvc
 	// reports ENOTSUP by design; without this the tool halts at the first one and
 	// never reaches the dependent view.
 	//
@@ -406,7 +406,7 @@ static int keep_decoding(int res)
 		// delay, so this is the last delivered frame, a few frames before the
 		// damaged one. Bounded so a badly damaged stream cannot flood stderr.
 		if (skipped_corrupt++ < 32)
-			fprintf(stderr, "edge264: skipped corrupt NAL unit after output frame %lu\n", frames_out);
+			fprintf(stderr, "edge264mvc_test: skipped corrupt NAL unit after output frame %lu\n", frames_out);
 		return 1;
 	}
 	return res == 0 || res == ENOBUFS || (res == ENOTSUP && skip_unsupported);
@@ -417,7 +417,7 @@ static int finish_decode_result(int res, const uint8_t *end1)
 	release_out();
 	edge264mvc_flush(d);
 	if (skipped_corrupt > 0) {
-		fprintf(stderr, "edge264: skipped %u corrupt NAL unit(s); output may show brief artefacts\n", skipped_corrupt);
+		fprintf(stderr, "edge264mvc_test: skipped %u corrupt NAL unit(s); output may show brief artefacts\n", skipped_corrupt);
 		skipped_corrupt = 0;
 	}
 	if (res == ENOBUFS || (res == ENODATA && conf[0] != NULL && conf[0] != end1))
@@ -857,7 +857,7 @@ int main(int argc, char *argv[])
 				case 'd': display = 1; break;
 				case 'f': print_failed = 1; break;
 				case 'k': skip_unsupported = 1; break;
-				case 'm': n_threads = getenv("EDGE264_THREADS") ? atoi(getenv("EDGE264_THREADS")) : -1; break;
+				case 'm': n_threads = getenv("EDGE264MVC_THREADS") ? atoi(getenv("EDGE264MVC_THREADS")) : -1; break;
 				case 'o': dump = 1; break;
 				case 'O': dump = 2; break;
 				case 's': n_threads = 0; break;
@@ -896,7 +896,7 @@ int main(int argc, char *argv[])
 			"\ttype-24 units real 3D Blu-rays carry, which a player skips), and\n"
 			"\tpast corrupt NALs, reporting how many were skipped\n"
 			"-m\tmulti-threaded decoding, auto-detecting cores (this is the default),\n"
-			"\tor using EDGE264_THREADS threads when that variable is set\n"
+			"\tor using EDGE264MVC_THREADS threads when that variable is set\n"
 			"-o\twrite decoded frames as YUV4MPEG2 (Y4M) to stdout for piping to an\n"
 			"\tencoder, e.g. | ffmpeg -i - -c:v libx264 out.mp4 (base view only)\n"
 			"-O\tlike -o but side-by-side (base|dependent) for frame-compatible 3D\n"

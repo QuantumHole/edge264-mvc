@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compare regular-file, stdin, and FIFO input in edge264_test."""
+"""Compare regular-file, stdin, and FIFO input in edge264mvc_test."""
 
 import argparse
 import os
@@ -143,7 +143,7 @@ def assert_distinct_views(data: bytes, width: int, height: int, label: str) -> N
     raise RuntimeError(f"{label} did not contain distinct MVC views")
 
 
-def edge264_argv(
+def edge264mvc_argv(
     exe: Path,
     source: str,
     mode: str,
@@ -162,11 +162,11 @@ def run_fifo(
     timeout: float,
     label: str,
 ) -> bytes:
-    with tempfile.TemporaryDirectory(prefix="edge264-stream-input-") as directory:
+    with tempfile.TemporaryDirectory(prefix="edge264mvc-stream-input-") as directory:
         fifo = Path(directory) / f"{fixture.stem}.264"
         os.mkfifo(fifo)
         process = subprocess.Popen(
-            edge264_argv(exe, str(fifo), mode, thread_args),
+            edge264mvc_argv(exe, str(fifo), mode, thread_args),
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
         )
@@ -189,7 +189,7 @@ def run_fifo(
             except BaseException as exc:
                 writer_errors.append(exc)
 
-        thread = threading.Thread(target=writer, name="edge264-fifo-writer", daemon=True)
+        thread = threading.Thread(target=writer, name="edge264mvc-fifo-writer", daemon=True)
         thread.start()
         try:
             stdout, stderr = process.communicate(timeout=timeout)
@@ -220,7 +220,7 @@ def check_empty_nal(exe: Path, fixture: Path, timeout: float) -> None:
     label = f"{fixture.name} empty NAL"
     try:
         completed = subprocess.run(
-            edge264_argv(exe, "-", "-O", ("-s",)),
+            edge264mvc_argv(exe, "-", "-O", ("-s",)),
             input=b"\x00\x00\x01" + fixture.read_bytes(),
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -270,19 +270,19 @@ def check_large_nal(exe: Path, fixture_spec: Fixture, timeout: float, have_fifo:
     # oversized filler NAL and still match, byte for byte.
     data = fixture_spec.path.resolve().read_bytes()
     augmented = with_large_filler(data)
-    with tempfile.TemporaryDirectory(prefix="edge264-large-nal-") as directory:
+    with tempfile.TemporaryDirectory(prefix="edge264mvc-large-nal-") as directory:
         augmented_path = Path(directory) / fixture_spec.path.name
         augmented_path.write_bytes(augmented)
         for thread_args, thread_name in THREADS:
             label = f"{fixture_spec.path.name} large-NAL -O {thread_name}"
             baseline = run_capture(
-                edge264_argv(exe, str(fixture_spec.path.resolve()), "-O", thread_args),
+                edge264mvc_argv(exe, str(fixture_spec.path.resolve()), "-O", thread_args),
                 None,
                 timeout,
                 f"{label} baseline",
             )
             regular = run_capture(
-                edge264_argv(exe, str(augmented_path), "-O", thread_args),
+                edge264mvc_argv(exe, str(augmented_path), "-O", thread_args),
                 None,
                 timeout,
                 f"{label} regular",
@@ -291,7 +291,7 @@ def check_large_nal(exe: Path, fixture_spec: Fixture, timeout: float, have_fifo:
             if regular != baseline:
                 raise RuntimeError(f"{label} filler NAL changed the decoded output")
             stdin = run_capture(
-                edge264_argv(exe, "-", "-O", thread_args),
+                edge264mvc_argv(exe, "-", "-O", thread_args),
                 augmented,
                 timeout,
                 f"{label} stdin",
@@ -316,7 +316,7 @@ def check_large_nal(exe: Path, fixture_spec: Fixture, timeout: float, have_fifo:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--exe", default="./edge264_test", type=Path)
+    parser.add_argument("--exe", default="./edge264mvc_test", type=Path)
     parser.add_argument("--timeout", default=15.0, type=float)
     args = parser.parse_args()
 
@@ -330,13 +330,13 @@ def main() -> int:
             for thread_args, thread_name in THREADS:
                 label = f"{fixture.name} {mode} {thread_name}"
                 regular = run_capture(
-                    edge264_argv(exe, str(fixture), mode, thread_args),
+                    edge264mvc_argv(exe, str(fixture), mode, thread_args),
                     None,
                     args.timeout,
                     f"{label} regular",
                 )
                 stdin = run_capture(
-                    edge264_argv(exe, "-", mode, thread_args),
+                    edge264mvc_argv(exe, "-", mode, thread_args),
                     data,
                     args.timeout,
                     f"{label} stdin",
@@ -352,7 +352,7 @@ def main() -> int:
                 if fixture_spec.three_byte:
                     three_byte = data.replace(b"\x00\x00\x00\x01", b"\x00\x00\x01")
                     stdin_three_byte = run_capture(
-                        edge264_argv(exe, "-", mode, thread_args),
+                        edge264mvc_argv(exe, "-", mode, thread_args),
                         three_byte,
                         args.timeout,
                         f"{label} three-byte stdin",

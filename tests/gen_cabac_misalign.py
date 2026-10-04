@@ -2,7 +2,7 @@
 # Synthesize a CABAC stream whose slices pad cabac_alignment_one_bit with ZEROS
 # instead of ones. The spec writes that padding as 1s, but it is non-normative
 # (carries no decodable information) and ffmpeg does not verify it - it just
-# byte-aligns and starts the arithmetic engine. edge264's cabac_start used to
+# byte-aligns and starts the arithmetic engine. the decoder's cabac_start used to
 # reject a non-1 padding (EBADMSG, 0 macroblocks decoded); the undelivered
 # pictures then piled up until the DPB overflowed into a mid-stream stall (found
 # on a real Extended-profile capture, x264.avi, every slice rejected -> STALL;0).

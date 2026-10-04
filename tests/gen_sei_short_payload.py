@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # Synthesize a valid stream whose SEI carries a HANDLED message that consumes
 # fewer bytes than its declared payloadSize, reproducing the parse_sei success
-# path desync (edge264_sei.c).
+# path desync (edge264mvc_sei.c).
 #
 # On a successful handler, parse_sei only byte-ALIGNED the reader instead of
 # advancing to start + payloadSize (as the error/skip path does). A

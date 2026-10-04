@@ -47,7 +47,7 @@ guard against sanitizer aborts and CPU-burn.
   RefPicList holds out-of-range slots (the -1 basePic and surplus entries), which
   initialize_context's implicit-weight init then used as indices into the
   picture-keyed 0..31 stack/array buffers (td.q[pic], MapPicToList0[pic], ...),
-  overrunning them (edge264_headers.c:241). Real over-active-ref captures crash
+  overrunning them (edge264mvc_headers.c:241). Real over-active-ref captures crash
   the same way (a level-3 480/720/1080 clip and HDTV samples found in a sweep).
   The fix clamps every out-of-range referenced RefPicList entry to an in-range
   slot; ffmpeg decodes such non-conformant streams without crashing. ASAN catches
@@ -59,8 +59,8 @@ guard against sanitizer aborts and CPU-burn.
   as CurrMbAddr / to derive the macroblock and sample pointers in
   initialize_context with no range check, so the macroblock loop wrote through a
   pointer past the per-frame buffers (the recovery_bits store in
-  parse_slice_data_cabac, edge264_slice.c:1686). first_mb_in_slice == PicSizeInMbs
-  lands exactly two Edge264Macroblock slots past the mb buffer, inside ASAN's
+  parse_slice_data_cabac, edge264mvc_slice.c:1686). first_mb_in_slice == PicSizeInMbs
+  lands exactly two Edge264MvcMacroblock slots past the mb buffer, inside ASAN's
   redzone, so the heap-buffer-overflow is caught deterministically. In the wild
   this is reached when two interleaved elementary streams of different resolutions
   (a Blu-ray main + secondary/PiP video) are fed to one decoder: once the smaller

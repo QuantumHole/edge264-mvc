@@ -17,7 +17,7 @@
 // hashes from the committed bitstreams alone and compares them to the
 // manifest, so a clone can run the whole suite offline.
 //
-// Self-contained on purpose: only edge264.h plus libc, no SDL, no crypto
+// Self-contained on purpose: only edge264mvc.h plus libc, no SDL, no crypto
 // dependency, so anyone who clones the repo can build and run it.
 
 #include <errno.h>
@@ -126,16 +126,16 @@ static Result decode_all(const uint8_t *buf, size_t size, int paced) {
 	r.base = HASH_INIT;
 	r.dep = HASH_INIT;
 	int64_t prev_disp = INT64_MIN;
-	// Diagnostic hook: EDGE264_THREADS lets this bit-exact oracle run the same
+	// Diagnostic hook: EDGE264MVC_THREADS lets this bit-exact oracle run the same
 	// hash comparison under multithreading (default 0 = single-thread, <0 = auto).
-	const char *nt = getenv("EDGE264_THREADS");
+	const char *nt = getenv("EDGE264MVC_THREADS");
 	int threads = nt ? atoi(nt) : 0;
 	Edge264MvcSettings settings;
 	edge264mvc_default_settings(&settings);
 	settings.n_threads = threads < 0 ? 0 : threads == 0 ? 1 : threads;
-	// EDGE264_TRACE=1 also formats the header trace, which must not change the
+	// EDGE264MVC_TRACE=1 also formats the header trace, which must not change the
 	// output (2 adds every macroblock)
-	const char *trace = getenv("EDGE264_TRACE");
+	const char *trace = getenv("EDGE264MVC_TRACE");
 	if (trace && atoi(trace) > 0) {
 		settings.log_cb = discard_line;
 		settings.log_mbs = atoi(trace) > 1;

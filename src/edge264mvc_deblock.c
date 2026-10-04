@@ -1,4 +1,4 @@
-#include "edge264_internal.h"
+#include "edge264mvc_internal.h"
 
 #if SIMD == SSE
 	#define addsu8(a, b) (u8x16)_mm_adds_epu8(a, b)
@@ -281,7 +281,7 @@ static always_inline i8x16 expand2(int64_t a) {
 /**
  * Deblock both chroma planes of the current macroblock in place.
  */
-static void deblock_CbCr_8bit(Edge264Context *ctx) {
+static void deblock_CbCr_8bit(Edge264MvcContext *ctx) {
 	size_t stride = ctx->t.stride[1] >> 1;
 	DECL_SSTRIDE(stride);
 	uint8_t * restrict p0 = ctx->samples_mb[1] - 8;
@@ -527,7 +527,7 @@ static void deblock_CbCr_8bit(Edge264Context *ctx) {
  * Deblock the luma plane of the current macroblock in place, then tail call to
  * chroma deblocking.
  */
-static void deblock_Y_8bit(Edge264Context *ctx) {
+static void deblock_Y_8bit(Edge264MvcContext *ctx) {
 	size_t stride = ctx->t.stride[0];
 	DECL_SSTRIDE(stride);
 	uint8_t * restrict p0 = ctx->samples_mb[0] - 8;
@@ -924,7 +924,7 @@ static void deblock_Y_8bit(Edge264Context *ctx) {
  *         mvs_c=0 |    0     |    1     |    1     |    0     |
  * ----------------+----------+----------+----------+----------+
  */
-static noinline void deblock_mb(Edge264Context *ctx)
+static noinline void deblock_mb(Edge264MvcContext *ctx)
 {
 	static const u8x16 idx2alpha[3] =
 		{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4, 4, 5, 6, 7, 8, 9, 10, 12, 13, 15, 17, 20, 22, 25, 28, 32, 36, 40, 45, 50, 56, 63, 71, 80, 90, 101, 113, 127, 144, 162, 182, 203, 226, 255, 255};

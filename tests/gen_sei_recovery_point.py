@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # Synthesize a valid stream ending in a tiny recovery_point SEI, reproducing the
-# false EBADMSG fixed in parse_sei (edge264_sei.c).
+# false EBADMSG fixed in parse_sei (edge264mvc_sei.c).
 #
 # parse_sei skips an unhandled SEI message by consuming payloadSize bytes, but
 # the skip loop was bounded by the bitstream reader's REFILL pointer (gb.CPB)

@@ -21,7 +21,7 @@
  * _ Favor vector over scalar code to avoid callee-save conventions.
  */
 
-#include "edge264_internal.h"
+#include "edge264mvc_internal.h"
 
 #if SIMD == SSE
 	#define spreadh8(a) shuffle(a, (i8x16){0, 1, 2, 3, 4, 5, 6, 7, 7, 7, 7, 7, 7, 7, 7, 7})

@@ -8,7 +8,7 @@
  * _ Try to reuse Raylib's bindings generation tool
  * _ Plugins
  * 	_ Read https://tldp.org/HOWTO/Program-Library-HOWTO/shared-libraries.html
- * 	_ Make a test target that builds locally and runs edge264_test
+ * 	_ Make a test target that builds locally and runs edge264mvc_test
  * 	_ Make a default target that builds locally
  * 	_ Make a install target that installs on host machine
  * 	_ Make a uninstall target
@@ -39,7 +39,7 @@
  * 	_ make reference dependencies be waited in each mb with conditions on minimum values of next_deblock_addr, like ffmpeg does
  * 	_ Windows fallback functions
  * 	_ Switch back convention to never allow CPB past end because of risk of pointer overflow!
- * 	_ Change edge264_test to avoid counting mmap time in benchmark (check if ffmpeg does it too to be fair)
+ * 	_ Change edge264mvc_test to avoid counting mmap time in benchmark (check if ffmpeg does it too to be fair)
  * 	_ fix segfault on videos/geek.264, mvc.264 and shrinkage.264
  * _ Fuzzing and bug hunting
  * 	_ reducing DPB size to 16 entries and int16 should never crash
@@ -81,7 +81,7 @@
 #if defined(__linux__) && !defined(_GNU_SOURCE)
 	#define _GNU_SOURCE // sched_getaffinity
 #endif
-#include "edge264_internal.h"
+#include "edge264mvc_internal.h"
 #ifdef _WIN32
 	#include <windows.h> // GetProcessAffinityMask
 #elif defined(__linux__)
@@ -92,7 +92,7 @@
 	#define HUGE_PAGE_SIZE ((size_t)2 << 20)
 #endif
 
-#include "edge264_headers.c"
+#include "edge264mvc_headers.c"
 
 // C11 aligned_alloc is absent from MinGW's msvcrt-based CRT, and memory from
 // the CRT's _aligned_malloc must be released with _aligned_free - plain
@@ -135,18 +135,18 @@ static void internal_free(void *samples, void *mbs, void *alloc_arg) {
 	aligned_free(samples);
 }
 
-static int ignore_NAL(Edge264Decoder *dec, Edge264UnrefCb unref_cb, void *unref_arg) {
+static int ignore_NAL(Edge264MvcDecoder *dec, Edge264MvcUnrefCb unref_cb, void *unref_arg) {
 	return 0;
 }
 
-static int unsup_NAL(Edge264Decoder *dec, Edge264UnrefCb unref_cb, void *unref_arg) {
+static int unsup_NAL(Edge264MvcDecoder *dec, Edge264MvcUnrefCb unref_cb, void *unref_arg) {
 	return ENOTSUP;
 }
 
 
 
-static Edge264Decoder *alloc_decoder(int n_threads, Edge264LogCb log_cb, void *log_arg, int log_mbs) {
-	Edge264Decoder *dec = aligned_malloc(64, sizeof(*dec)); // maximal SIMD type alignment used in edge264
+static Edge264MvcDecoder *alloc_decoder(int n_threads, Edge264MvcLogCb log_cb, void *log_arg, int log_mbs) {
+	Edge264MvcDecoder *dec = aligned_malloc(64, sizeof(*dec)); // maximal SIMD type alignment used in edge264-mvc
 	if (dec == NULL)
 		return NULL;
 	memset(dec, 0, sizeof(*dec));
@@ -287,7 +287,7 @@ static Edge264Decoder *alloc_decoder(int n_threads, Edge264LogCb log_cb, void *l
 
 
 
-static void flush_decoder(Edge264Decoder *dec) {
+static void flush_decoder(Edge264MvcDecoder *dec) {
 	if (dec == NULL)
 		return;
 	if (dec->n_threads)
@@ -303,8 +303,8 @@ static void flush_decoder(Edge264Decoder *dec) {
 
 
 
-static void free_decoder(Edge264Decoder **pdec) {
-	Edge264Decoder *dec;
+static void free_decoder(Edge264MvcDecoder **pdec) {
+	Edge264MvcDecoder *dec;
 	if (pdec != NULL && (dec = *pdec) != NULL) {
 		*pdec = NULL;
 		if (dec->n_threads) {
@@ -353,7 +353,7 @@ static void free_decoder(Edge264Decoder **pdec) {
  * forever, so fill the queues with the pictures awaiting output and let
  * get_frame emit them as at the end of a stream.
  */
-static void unblock_output(Edge264Decoder *dec) {
+static void unblock_output(Edge264MvcDecoder *dec) {
 	for (int v = 0; v < 2; v++)
 		while (__builtin_ctz(movemask(dec->get_frame_queue_v[v]) | 1 << 16) < 16 && bump_frame(dec, v, 0));
 	dec->flushing = 1; // cleared by the next NAL that passes the gate
@@ -377,7 +377,7 @@ static void internal_unref_nal(int ret, void *nal_base) {
  * to allow wrapping around memory, so the buffer may be close to end of memory
  * without risk.
  */
-static int decode_nal(Edge264Decoder *dec, const uint8_t *buf, const uint8_t *end, int64_t pts, int64_t user_data)
+static int decode_nal(Edge264MvcDecoder *dec, const uint8_t *buf, const uint8_t *end, int64_t pts, int64_t user_data)
 {
 	static const char * const nal_unit_type_names[32] = {
 		[0 ... 31] = "Unknown",
@@ -513,7 +513,7 @@ static int decode_nal(Edge264Decoder *dec, const uint8_t *buf, const uint8_t *en
 // exported, never the POC-scaled magnitude, so the exact increment is immaterial;
 // keying off the previous unwrapped value (not the raw POC) also makes the guard
 // immune to the parser SPS read here belonging to a later, parse-ahead sequence.
-static int64_t edge264_unwrap_output_poc(Edge264Decoder *dec, int view, int32_t raw_poc) {
+static int64_t edge264mvc_unwrap_output_poc(Edge264MvcDecoder *dec, int view, int32_t raw_poc) {
 	int64_t base = dec->OutputPocBase[view];
 	int64_t value = base + raw_poc;
 	if (dec->HavePrevOutputPoc[view]) {
@@ -542,7 +542,7 @@ static int64_t edge264_unwrap_output_poc(Edge264Decoder *dec, int view, int32_t 
  * _ there are more frames to output than max_num_reorder_frames
  * _ there is no empty slot for the next frame
  */
-static int get_frame(Edge264Decoder *dec, Edge264Frame *out, int borrow) {
+static int get_frame(Edge264MvcDecoder *dec, Edge264MvcOutput *out, int borrow) {
 	if (dec == NULL || out == NULL)
 		return EINVAL;
 	if (dec->n_threads)
@@ -731,7 +731,7 @@ static int get_frame(Edge264Decoder *dec, Edge264Frame *out, int borrow) {
 		out->FrameId = dec->FrameIds[pic0];
 		out->Poc = dec->FieldOrderCnt[0][pic0];
 		out->Poc_mvc = 0;
-		out->DisplayPoc = edge264_unwrap_output_poc(dec, 0, out->Poc);
+		out->DisplayPoc = edge264mvc_unwrap_output_poc(dec, 0, out->Poc);
 		out->DisplayPoc_mvc = 0;
 		out->return_arg = (void *)((uintptr_t)1 << pic0);
 		if (idx1 >= 0) {
@@ -743,7 +743,7 @@ static int get_frame(Edge264Decoder *dec, Edge264Frame *out, int borrow) {
 			out->samples_mvc[2] = dec->samples_buffers[pic1] + offC + (dec->out.stride_C >> 1);
 			out->FrameId_mvc = dec->FrameIds[pic1];
 			out->Poc_mvc = dec->FieldOrderCnt[0][pic1];
-			out->DisplayPoc_mvc = edge264_unwrap_output_poc(dec, 1, out->Poc_mvc);
+			out->DisplayPoc_mvc = edge264mvc_unwrap_output_poc(dec, 1, out->Poc_mvc);
 			out->return_arg = (void *)((uintptr_t)1 << pic0 | (uintptr_t)1 << pic1);
 		}
 		res = 0;
@@ -834,7 +834,7 @@ static int get_frame(Edge264Decoder *dec, Edge264Frame *out, int borrow) {
 
 
 
-static void return_frame(Edge264Decoder *dec, void *return_arg) {
+static void return_frame(Edge264MvcDecoder *dec, void *return_arg) {
 	if (dec == NULL)
 		return;
 	if (dec->n_threads)
@@ -877,7 +877,7 @@ int edge264mvc_open(Edge264MvcDecoder **decoder, const Edge264MvcSettings *setti
 	if (s.n_threads < 0 || s.max_frame_pixels < 0)
 		return EDGE264MVC_INVALID;
 	// n_threads 0 is auto-detect and 1 decodes on the calling thread, internally -1 and 0
-	Edge264Decoder *dec = alloc_decoder(s.n_threads == 0 ? -1 : s.n_threads == 1 ? 0 : s.n_threads, s.log_cb, s.log_arg, s.log_mbs);
+	Edge264MvcDecoder *dec = alloc_decoder(s.n_threads == 0 ? -1 : s.n_threads == 1 ? 0 : s.n_threads, s.log_cb, s.log_arg, s.log_mbs);
 	if (dec == NULL)
 		return EDGE264MVC_NOMEM;
 	// the largest frame of any level is 139264 macroblocks (MaxFS of level 6.2)
@@ -923,7 +923,7 @@ int edge264mvc_send_end(Edge264MvcDecoder *dec) {
 }
 
 // Fill a frame of the public API from one of get_frame, while its slots are held.
-static void export_frame(Edge264Decoder *dec, const Edge264Frame *f, Edge264MvcFrame *out) {
+static void export_frame(Edge264MvcDecoder *dec, const Edge264MvcOutput *f, Edge264MvcFrame *out) {
 	memset(out, 0, sizeof(*out));
 	uint32_t slots = (uint32_t)(uintptr_t)f->return_arg;
 	for (int view = 0; view < 2; view++) {
@@ -960,7 +960,7 @@ int edge264mvc_receive_frame(Edge264MvcDecoder *dec, Edge264MvcFrame *frame) {
 	if (dec == NULL || frame == NULL)
 		return EDGE264MVC_INVALID;
 	for (int drains = 0;; ) {
-		Edge264Frame f;
+		Edge264MvcOutput f;
 		if (get_frame(dec, &f, 1) == 0) {
 			export_frame(dec, &f, frame);
 			dec->want_frame = 0;

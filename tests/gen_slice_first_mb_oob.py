@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # Synthesize a stream whose single coded slice carries a first_mb_in_slice that
 # lies OUTSIDE the current picture, reproducing the out-of-bounds macroblock
-# write fixed in edge264_headers.c (parse_slice_layer_without_partitioning).
+# write fixed in edge264mvc_headers.c (parse_slice_layer_without_partitioning).
 #
 # H.264 7.4.3 requires first_mb_in_slice in 0..PicSizeInMbs-1. The decoder used
 # it directly as CurrMbAddr / to derive the macroblock and sample pointers in
@@ -16,7 +16,7 @@
 # carries that picture's (larger) first_mb_in_slice. We reproduce the decoder-
 # level fault directly and minimally: a 2x2-macroblock picture (PicSizeInMbs == 4)
 # whose lone slice declares first_mb_in_slice == 4. That places the first
-# macroblock pointer exactly two Edge264Macroblock slots past the per-frame mb
+# macroblock pointer exactly two Edge264MvcMacroblock slots past the per-frame mb
 # buffer - inside AddressSanitizer's redzone, so the overflow is caught
 # deterministically (independent of heap layout). The fix rejects the slice with
 # EBADMSG before any macroblock is touched; ffmpeg likewise drops such a slice.

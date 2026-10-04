@@ -92,7 +92,7 @@ decoder reproduces that hash. Run it from the repo root:
   Profile 128, level 4.1, `max_num_reorder_frames = 1`, `max_dec_frame_buffering = 4`.
   It doubly guards the exported **display-order key**: the same short-sequence
   4-bit-POC-lsb layout makes two successive output pictures share a raw POC, so the
-  pre-fix `edge264_unwrap_output_poc` (which advanced its running base only on a
+  pre-fix `edge264mvc_unwrap_output_poc` (which advanced its running base only on a
   strict POC *decrease*) emitted an equal DisplayPoc - a plateau the harness now
   rejects for stereo (strict `<=` in `account_frame`), pinning the
   strictly-monotonic-DisplayPoc fix on a real-3D-Blu-ray-derived layout.

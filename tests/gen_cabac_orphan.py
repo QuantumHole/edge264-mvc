@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # Synthesize a CABAC stream that reproduces the flush-drain orphan deadlock fixed
-# in edge264_headers.c (bump_all_frames). One picture is left INCOMPLETE (a slice
+# in edge264mvc_headers.c (bump_all_frames). One picture is left INCOMPLETE (a slice
 # that ends, via end_of_slice, after coding only 1 of the picture's 2 macroblocks,
 # so remaining_mbs stays > 0 and the picture never finalizes - the same state a
 # corrupt broadcast stream leaves when a slice errors mid-frame). It has the

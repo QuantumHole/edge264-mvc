@@ -1,7 +1,7 @@
 /**
  * Parsing CAVLC and CABAC values (for 32 or 64 bit machines).
  */
-#include "edge264_internal.h"
+#include "edge264mvc_internal.h"
 
 
 /**
@@ -10,7 +10,7 @@
  * The process reads an unaligned 16-byte chunk and will not read past the last
  * aligned 16-byte chunk containing the last bytes before ctx->t.gb.end.
  */
-static inline size_t get_bytes(Edge264GetBits *gb, int nbytes)
+static inline size_t get_bytes(Edge264MvcGetBits *gb, int nbytes)
 {
 	static const i8x16 shuf[8] = {
 		{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, -1},
@@ -92,7 +92,7 @@ static inline size_t get_bytes(Edge264GetBits *gb, int nbytes)
  *   The main context then fits in 2 variables, which are easier to store in
  *   Global Register Variables.
  */
-static noinline int refill(Edge264GetBits *gb, int ret) {
+static noinline int refill(Edge264MvcGetBits *gb, int ret) {
 	size_t bytes = get_bytes(gb, SIZE_BIT >> 3);
 	int trailing_bit = ctz(gb->msb_cache); // [0..SIZE_BIT-1]
 	gb->msb_cache = (gb->msb_cache ^ (size_t)1 << trailing_bit) | bytes >> (SIZE_BIT - 1 - trailing_bit);
@@ -100,7 +100,7 @@ static noinline int refill(Edge264GetBits *gb, int ret) {
 	return ret;
 }
 
-static noinline int get_u1(Edge264GetBits *gb) {
+static noinline int get_u1(Edge264MvcGetBits *gb) {
 	int ret = gb->msb_cache >> (SIZE_BIT - 1);
 	gb->msb_cache = shld(gb->lsb_cache, gb->msb_cache, 1);
 	if (gb->lsb_cache <<= 1)
@@ -109,7 +109,7 @@ static noinline int get_u1(Edge264GetBits *gb) {
 }
 
 // Parses a 1~32-bit fixed size code
-static noinline unsigned get_uv(Edge264GetBits *gb, int v) {
+static noinline unsigned get_uv(Edge264MvcGetBits *gb, int v) {
 	int ret = gb->msb_cache >> (SIZE_BIT - v);
 	if (SIZE_BIT == 32 && __builtin_expect(v == 32, 0)) {
 		gb->msb_cache = gb->lsb_cache;
@@ -124,7 +124,7 @@ static noinline unsigned get_uv(Edge264GetBits *gb, int v) {
 }
 
 // Parses a Exp-Golomb code in one read, up to 2^16-2 (2^32-2 on 64-bit machines)
-static noinline unsigned get_ue16(Edge264GetBits *gb, unsigned upper) {
+static noinline unsigned get_ue16(Edge264MvcGetBits *gb, unsigned upper) {
 	int v = clz(gb->msb_cache | (size_t)1 << (SIZE_BIT / 2)) * 2 + 1; // [1..SIZE_BIT-1]
 	int ret = minu((gb->msb_cache >> (SIZE_BIT - v)) - 1, upper);
 	gb->msb_cache = shld(gb->lsb_cache, gb->msb_cache, v);
@@ -134,7 +134,7 @@ static noinline unsigned get_ue16(Edge264GetBits *gb, unsigned upper) {
 }
 
 // Parses a signed Exp-Golomb code in one read, from -2^15+1 to 2^15-1 (-2^31+1 to 2^31-1 on 64-bit machines)
-static noinline int get_se16(Edge264GetBits *gb, int lower, int upper) {
+static noinline int get_se16(Edge264MvcGetBits *gb, int lower, int upper) {
 	int v = clz(gb->msb_cache | (size_t)1 << (SIZE_BIT / 2)) * 2 + 1; // [1..SIZE_BIT-1]
 	unsigned ue = (gb->msb_cache >> (SIZE_BIT - v)) - 1;
 	int ret = min(max((ue & 1) ? (ue >> 1) + 1 : -(ue >> 1), lower), upper);
@@ -146,7 +146,7 @@ static noinline int get_se16(Edge264GetBits *gb, int lower, int upper) {
 
 // Extensions to [0,2^32-2] and [-2^31+1,2^31-1] for 32-bit machines
 #if SIZE_BIT == 32
-	static noinline unsigned get_ue32(Edge264GetBits *gb, unsigned upper) {
+	static noinline unsigned get_ue32(Edge264MvcGetBits *gb, unsigned upper) {
 		int leadingZeroBits = clz(gb->msb_cache | 1); // [0..31]
 		gb->msb_cache = shld(gb->lsb_cache, gb->msb_cache, leadingZeroBits);
 		if (!(gb->lsb_cache <<= leadingZeroBits))
@@ -154,7 +154,7 @@ static noinline int get_se16(Edge264GetBits *gb, int lower, int upper) {
 		return minu(get_uv(gb, leadingZeroBits + 1) - 1, upper);
 	}
 
-	static noinline int get_se32(Edge264GetBits *gb, int lower, int upper) {
+	static noinline int get_se32(Edge264MvcGetBits *gb, int lower, int upper) {
 		int leadingZeroBits = clz(gb->msb_cache | 1); // [0..31]
 		gb->msb_cache = shld(gb->lsb_cache, gb->msb_cache, leadingZeroBits);
 		if (!(gb->lsb_cache <<= leadingZeroBits))
@@ -239,21 +239,21 @@ static const uint8_t transIdx[256] = {
 	244, 245,   9,   8, 248, 249,   5,   4, 248, 249,   1,   0, 252, 253,   0,   1,
 };
 
-static noinline int renorm_bits(Edge264Context * restrict ctx, int bits) {
+static noinline int renorm_bits(Edge264MvcContext * restrict ctx, int bits) {
 	size_t bytes = get_bytes(&ctx->t.gb, bits >> 3);
 	ctx->t.gb.offset = shld(bytes, ctx->t.gb.offset, bits & -8);
 	ctx->t.gb.range <<= bits & -8;
 	return bits & 7;
 }
 
-static noinline int renorm_fixed(Edge264Context * restrict ctx, int ret) {
+static noinline int renorm_fixed(Edge264MvcContext * restrict ctx, int ret) {
 	size_t bytes = get_bytes(&ctx->t.gb, SIZE_BIT / 8 - 1);
 	ctx->t.gb.offset = shld(bytes, ctx->t.gb.offset, SIZE_BIT - 8);
 	ctx->t.gb.range <<= SIZE_BIT - 8;
 	return ret;
 }
 
-static inline int get_ae_inline(Edge264Context * restrict ctx, int ctxIdx) {
+static inline int get_ae_inline(Edge264MvcContext * restrict ctx, int ctxIdx) {
 	size_t state = ctx->cabac[ctxIdx];
 	size_t range = ctx->t.gb.range;
 	size_t offset = ctx->t.gb.offset;
@@ -275,11 +275,11 @@ static inline int get_ae_inline(Edge264Context * restrict ctx, int ctxIdx) {
 	return renorm_fixed(ctx, binVal);
 }
 
-static noinline int get_ae(Edge264Context * restrict ctx, int ctxIdx) {
+static noinline int get_ae(Edge264MvcContext * restrict ctx, int ctxIdx) {
 	return get_ae_inline(ctx, ctxIdx);
 }
 
-static inline int get_bypass(Edge264Context *ctx) {
+static inline int get_bypass(Edge264MvcContext *ctx) {
 	if (__builtin_expect(ctx->t.gb.range < 512, 0))
 		renorm_bits(ctx, SIZE_BIT - 9);
 	ctx->t.gb.range >>= 1;
@@ -288,7 +288,7 @@ static inline int get_bypass(Edge264Context *ctx) {
 	return binVal;
 }
 
-static int cabac_start(Edge264Context *ctx) {
+static int cabac_start(Edge264MvcContext *ctx) {
 	// reclaim bits from cache while realigning with CPB on a byte boundary
 	int extra_bits = SIZE_BIT - 1 - ctz(ctx->t.gb.lsb_cache);
 	while (extra_bits >= 8) {
@@ -314,7 +314,7 @@ static int cabac_start(Edge264Context *ctx) {
 	return ret;
 }
 
-static int cabac_terminate(Edge264Context *ctx) {
+static int cabac_terminate(Edge264MvcContext *ctx) {
 	int extra = SIZE_BIT - 9 - clz(ctx->t.gb.range); // [0..SIZE_BIT-9]
 	ctx->t.gb.range -= (size_t)2 << extra;
 	if (ctx->t.gb.offset < ctx->t.gb.range) {
@@ -337,7 +337,7 @@ static int cabac_terminate(Edge264Context *ctx) {
  * as copying from precomputed values. Please refrain from providing a default,
  * unoptimised version.
  */
-static void cabac_init(Edge264Context *ctx) {
+static void cabac_init(Edge264MvcContext *ctx) {
 	i8x16 mul = set16(max(ctx->t.QP[0], 0) + 4096);
 	i8x16 c1 = set8(1), c64 = set8(64), c126 = set8(126);
 	const i8x16 *src = (i8x16 *)cabac_context_init[ctx->t.cabac_init_idc];

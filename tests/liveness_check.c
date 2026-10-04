@@ -13,7 +13,7 @@
 // a regressed (stalling) decoder fails cleanly with "stall" instead of hanging
 // the test suite. Manifest lines: "<name> <expected_base_frames>".
 //
-// Self-contained: only edge264.h + libc, like tests/conformance_check.c.
+// Self-contained: only edge264mvc.h + libc, like tests/conformance_check.c.
 // Usage: liveness_check run <manifest> <fixtures-dir>
 
 #include <errno.h>
@@ -67,10 +67,10 @@ static uint8_t *load_file(const char *path, size_t *size_out) {
 
 // Returns delivered base-frame count, or -1 if the decoder stalled.
 static int decode_count(const uint8_t *buf, size_t size) {
-	// EDGE264_THREADS lets the liveness suite run the damaged-stream fixtures
+	// EDGE264MVC_THREADS lets the liveness suite run the damaged-stream fixtures
 	// under multithreading (default 0 = single-thread, <0 = auto), guarding the
 	// multithreaded teardown and MVC-pairing deadlock fixes against regressions.
-	const char *nt = getenv("EDGE264_THREADS");
+	const char *nt = getenv("EDGE264MVC_THREADS");
 	int threads = nt ? atoi(nt) : 0;
 	Edge264MvcSettings settings;
 	edge264mvc_default_settings(&settings);

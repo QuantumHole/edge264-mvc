@@ -16,7 +16,7 @@
 //   sei_payloadsize_dos  - SEI with a huge payloadSize for an unsupported type;
 //                          guards the unbounded skip loop (M5).
 //
-// Self-contained: only edge264.h + libc. Usage: asan_check run <manifest> <dir>
+// Self-contained: only edge264mvc.h + libc. Usage: asan_check run <manifest> <dir>
 
 #include <errno.h>
 #include <stdint.h>
@@ -57,9 +57,9 @@ static uint8_t *load_file(const char *path, size_t *size_out) {
 static int decode_all(const uint8_t *buf, size_t size) {
 	Edge264MvcSettings settings;
 	edge264mvc_default_settings(&settings);
-	// EDGE264_THREADS as in the other harnesses (default 0 = single-thread,
+	// EDGE264MVC_THREADS as in the other harnesses (default 0 = single-thread,
 	// <0 = auto), for the fixtures that only stall under multithreading
-	const char *nt = getenv("EDGE264_THREADS");
+	const char *nt = getenv("EDGE264MVC_THREADS");
 	int threads = nt ? atoi(nt) : 0;
 	settings.n_threads = threads < 0 ? 0 : threads == 0 ? 1 : threads;
 	settings.log_cb = logcb;

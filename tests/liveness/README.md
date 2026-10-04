@@ -10,13 +10,13 @@ a failed target). Each fixture runs in a forked child under a wall-clock timeout
 so a deadlock where `decode_nal` itself never returns (which the
 in-process progress guard cannot catch) is reported as a clean "deadlock" FAIL
 instead of hanging the whole suite. The liveness suite is also run
-multithreaded (`EDGE264_THREADS=8` and `-1`), where these deadlocks surface.
+multithreaded (`EDGE264MVC_THREADS=8` and `-1`), where these deadlocks surface.
 
 - mvc_unpaired_base.264: derived from tests/conformance/mvc/MVCDS-4.264 by
   removing exactly one dependent-view coded-slice NAL (nal_unit_type 20). One
   base frame thus loses its POC-matching dependent. ffmpeg decodes the full
   9-frame base view of this stream; edge264 must too (emitting the unpairable
-  base alone with zeroed _mvc), not deadlock. Regresses bug M1 (edge264.c
+  base alone with zeroed _mvc), not deadlock. Regresses bug M1 (edge264mvc.c
   get_frame MVC pairing) if the liveness valve is removed.
 
 - dpb_frame_num_gap.264: a frame_num gap (8.2.5.2) where every reference slot
@@ -33,7 +33,7 @@ multithreaded (`EDGE264_THREADS=8` and `-1`), where these deadlocks surface.
   the picture, leaving the decoder spinning on ENOBUFS. ffmpeg decodes the full
   16x8640 frame, and the fixed decoder's output is byte-identical to ffmpeg's
   (207360-byte YUV420p); edge264 must deliver that 1 frame, not stall.
-  Regresses bug L2 (edge264_headers.c parse_seq_parameter_set height bound).
+  Regresses bug L2 (edge264mvc_headers.c parse_seq_parameter_set height bound).
 
 - zero_ref_idr.264: a synthetic single all-intra IDR (16x16), generated with
   tests/gen_avc.py with max_num_ref_frames=0 in the SPS - the case x264 emits
@@ -44,7 +44,7 @@ multithreaded (`EDGE264_THREADS=8` and `-1`), where these deadlocks surface.
   parse_slice_layer_without_partitioning, aborting the process. ffmpeg decodes
   the single frame, and the fixed decoder's output is byte-identical to ffmpeg's
   (384-byte YUV420p); edge264 must deliver that 1 frame. Regresses the zero-ref
-  fix (edge264_headers.c parse_seq_parameter_set max_num_ref_frames floor) if
+  fix (edge264mvc_headers.c parse_seq_parameter_set max_num_ref_frames floor) if
   the floor is removed.
 
 - dpb_overflow.264: a synthetic single all-intra IDR (20x20 = 400 MBs / 320x320px),
@@ -52,10 +52,10 @@ multithreaded (`EDGE264_THREADS=8` and `-1`), where these deadlocks surface.
   Because 400 > 396, the inferred MaxDpbFrames = 396/400 = 0 and so the derived
   max_dec_frame_buffering = 0, yet the IDR is a reference picture occupying one DPB
   slot. The fullness assert in parse_slice_layer_without_partitioning
-  (edge264_headers.c, C.4.5) then sees 1 > 0 and aborts the process during slice-
+  (edge264mvc_headers.c, C.4.5) then sees 1 > 0 and aborts the process during slice-
   header parsing, before any macroblock is decoded. ffmpeg decodes the single
   frame of this over-level clip; edge264 must deliver that 1 frame too. Regresses
-  the DPB-buffering floor (edge264_headers.c parse_seq_parameter_set, where the
+  the DPB-buffering floor (edge264mvc_headers.c parse_seq_parameter_set, where the
   derived MaxDpbFrames is floored at the reference count) if the floor is removed.
 
 - incomplete_frame.264: a synthetic IDR (30 bytes), generated with tests/gen_avc.py,
@@ -69,7 +69,7 @@ multithreaded (`EDGE264_THREADS=8` and `-1`), where these deadlocks surface.
   so the decoder delivers the partial picture (1) and terminates. This is the class
   of real captured TS/M2TS clips that end mid-frame - ffmpeg conceals the partial
   picture and terminates likewise. Regresses the end-of-stream forward-progress
-  valve (edge264.c get_frame) => stall.
+  valve (edge264mvc.c get_frame) => stall.
 
 - vui_overread.264: a synthetic SPS+PPS+IDR (43 bytes) generated with tests/gen_avc.py,
   with the SPS NAL's last 2 bytes trimmed afterwards so its VUI over-reads past the SPS
@@ -81,7 +81,7 @@ multithreaded (`EDGE264_THREADS=8` and `-1`), where these deadlocks surface.
   max_dec_frame_buffering to the inferred defaults) and decodes the IDR. Two real captures
   (a Main and a High clip) hit this - ffmpeg flags them "Overread VUI by 8 bits" too and
   decodes them. edge264 must deliver the 1 frame. Regresses the VUI-overread SPS tolerance
-  (edge264_headers.c parse_seq_parameter_set) => EBADMSG / 0 frames.
+  (edge264mvc_headers.c parse_seq_parameter_set) => EBADMSG / 0 frames.
 
 - cabac_overread.264: 24 single-macroblock I_PCM pictures, synthesized by
   tests/gen_cabac_overread.py (a minimal standalone CABAC encoder, since tests/gen_avc.py
@@ -98,7 +98,7 @@ multithreaded (`EDGE264_THREADS=8` and `-1`), where these deadlocks surface.
   the trailing slop on a slice whose CurrMbAddr reached the picture end, so all 24 are
   delivered. ffmpeg decodes them too. Found on a real 4K capture (VR Inferno.mp4) whose
   4-slice CABAC frames hit this on ~29 of their final slices. Regresses the cabac
-  end-of-slice over-read tolerance (edge264_headers.c worker_loop) => mid-stream stall.
+  end-of-slice over-read tolerance (edge264mvc_headers.c worker_loop) => mid-stream stall.
 
 - cabac_orphan.264: an IDR followed by 23 pictures (synthetic CABAC,
   tests/gen_cabac_orphan.py; 1x2 = 2-MB pictures), where picture 1 codes only 1 of its
@@ -113,7 +113,7 @@ multithreaded (`EDGE264_THREADS=8` and `-1`), where these deadlocks surface.
   the decoder delivered 23 of 24 and stalled. The fix finalizes and re-queues such an orphan
   so the drain terminates and all 24 are delivered - ffmpeg likewise conceals and emits the
   damaged picture. Found on a real corrupt broadcast capture (3sat HD .ts, 2474/2475).
-  Regresses the flush-drain orphan recovery (edge264_headers.c bump_all_frames) => stall
+  Regresses the flush-drain orphan recovery (edge264mvc_headers.c bump_all_frames) => stall
   losing the last picture.
 
 - cabac_all_incomplete.264: 24 unfinished two-macroblock pictures generated by
@@ -139,7 +139,7 @@ multithreaded (`EDGE264_THREADS=8` and `-1`), where these deadlocks surface.
   position regardless, so every picture decodes (the CABAC data is byte-aligned and valid). Found
   on a real Extended-profile capture (x264.avi) whose every slice was rejected: edge264 stalled at
   0 frames, now decodes all 2209 byte-identical to ffmpeg. Regresses the cabac_alignment leniency
-  (edge264_bitstream.c cabac_start) => mid-stream stall delivering 0 frames.
+  (edge264mvc_bitstream.c cabac_start) => mid-stream stall delivering 0 frames.
 
 - mvc_baseless_dependent.264: a subset SPS (NAL type 15) plus 18 inter-coded dependent-view
   slices (NAL type 20, P) with NO base-view SPS (type 7) and no base-view slices - a stream
@@ -157,7 +157,7 @@ multithreaded (`EDGE264_THREADS=8` and `-1`), where these deadlocks surface.
   forked child under a wall-clock timeout and reports an overrun as a clean "deadlock" FAIL. The
   fix rejects each base-less inter-coded dependent slice as corrupt (EBADMSG) and delivers 0
   frames, like ffmpeg. Regresses the base-less dependent-view guard
-  (edge264_headers.c parse_slice_layer_without_partitioning) => deadlock (only visible
+  (edge264mvc_headers.c parse_slice_layer_without_partitioning) => deadlock (only visible
   multithreaded; the synchronous path force-runs the task and does not hang).
 
 - mvc_orphan_dep_tail.264: a two-view body (1 stereo IDR + 3 stereo P access units, 16x16 MBs,
@@ -183,7 +183,7 @@ multithreaded (`EDGE264_THREADS=8` and `-1`), where these deadlocks surface.
   additionally treats any slot still written by a busy task as unavailable (inflight_frames).
   Expected: the 4 body stereo pairs (4 base frames); every tail dependent is dropped (it has no
   base to pair with), like ffmpeg, and the decoder terminates. Regresses either guard
-  (edge264.c get_frame orphan valve, edge264_headers.c
+  (edge264mvc.c get_frame orphan valve, edge264mvc_headers.c
   parse_slice_layer_without_partitioning slot allocation) => deadlock or crash (multithreaded).
 
 - incomplete_ref_dependency.264 and incomplete_ref_dependency_eos.264: 177-byte and

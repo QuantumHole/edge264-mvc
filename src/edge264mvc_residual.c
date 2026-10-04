@@ -1,4 +1,4 @@
-#include "edge264_internal.h"
+#include "edge264mvc_internal.h"
 
 #if SIMD == SSE
 	#define addlou8s16(a, b) (cvtlo8u16(a) + (i16x8)b)
@@ -105,7 +105,7 @@ static const i8x16 normAdjust8x8[12] = {
  * Here we try to stay close to the spec's pseudocode, avoiding minor
  * optimisations that would make the code hard to understand.
  */
-static noinline void add_idct4x4(Edge264Context *ctx, int iYCbCr, int DCidx, uint8_t *p)
+static noinline void add_idct4x4(Edge264MvcContext *ctx, int iYCbCr, int DCidx, uint8_t *p)
 {
 	// loading and scaling
 	unsigned qP = ctx->t.QP[iYCbCr];
@@ -171,7 +171,7 @@ static noinline void add_idct4x4(Edge264Context *ctx, int iYCbCr, int DCidx, uin
 	}
 }
 
-static void add_dc4x4(Edge264Context *ctx, int iYCbCr, int DCidx, uint8_t *p) {
+static void add_dc4x4(Edge264MvcContext *ctx, int iYCbCr, int DCidx, uint8_t *p) {
 	i32x4 r = set16((ctx->c[16 + DCidx] + 32) >> 6);
 	size_t stride = ctx->t.stride[iYCbCr];
 	DECL_SSTRIDE(stride);
@@ -191,7 +191,7 @@ static void add_dc4x4(Edge264Context *ctx, int iYCbCr, int DCidx, uint8_t *p) {
 /**
  * Inverse 8x8 transform
  */
-static void add_idct8x8(Edge264Context *ctx, int iYCbCr, uint8_t *dst0)
+static void add_idct8x8(Edge264MvcContext *ctx, int iYCbCr, uint8_t *dst0)
 {
 	// loading and scaling
 	unsigned qP = ctx->t.QP[iYCbCr];
@@ -354,7 +354,7 @@ static void add_idct8x8(Edge264Context *ctx, int iYCbCr, uint8_t *dst0)
  * 
  * These functions do not gain enough from 8bit to justify distinct versions.
  */
-static void transform_dc4x4(Edge264Context *ctx, int iYCbCr)
+static void transform_dc4x4(Edge264MvcContext *ctx, int iYCbCr)
 {
 	// load matrix in column order and multiply right
 	i32x4 x0 = ctx->c_v[0] + ctx->c_v[1];
@@ -458,7 +458,7 @@ static void transform_dc4x4(Edge264Context *ctx, int iYCbCr)
 	}
 }
 
-static void transform_dc2x2(Edge264Context *ctx)
+static void transform_dc2x2(Edge264MvcContext *ctx)
 {
 	// load both matrices interlaced+transposed and multiply right
 	i32x4 d0 = ctx->c_v[0] + ctx->c_v[1];

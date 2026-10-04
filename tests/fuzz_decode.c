@@ -8,7 +8,7 @@
  *
  * Build (clang): see `make fuzz`, then run e.g.
  *   ./fuzz_decode -max_len=262144 -timeout=10 -rss_limit_mb=4096 corpus tests/conformance/2d
- * EDGE264_FUZZ_THREADS sets n_threads (default 1: decode on the calling
+ * EDGE264MVC_FUZZ_THREADS sets n_threads (default 1: decode on the calling
  * thread, which keeps every finding reproducible).
  */
 #include <stdint.h>
@@ -46,7 +46,7 @@ static int receive_frames(Edge264MvcDecoder *dec) {
 int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
 	Edge264MvcSettings settings;
 	edge264mvc_default_settings(&settings);
-	const char *env = getenv("EDGE264_FUZZ_THREADS");
+	const char *env = getenv("EDGE264MVC_FUZZ_THREADS");
 	settings.n_threads = env ? atoi(env) : 1;
 	Edge264MvcDecoder *dec;
 	if (edge264mvc_open(&dec, &settings) != EDGE264MVC_OK)

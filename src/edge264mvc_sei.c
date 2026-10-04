@@ -1,4 +1,4 @@
-static int parse_buffering_period(Edge264Decoder *dec) {
+static int parse_buffering_period(Edge264MvcDecoder *dec) {
 	get_ue16(&dec->gb, 31);
 	if (!dec->sps.BitDepth_Y) // if SPS wasn't initialized
 		return EBADMSG;
@@ -26,7 +26,7 @@ static int parse_buffering_period(Edge264Decoder *dec) {
 
 
 
-static int parse_pic_timing(Edge264Decoder *dec) {
+static int parse_pic_timing(Edge264MvcDecoder *dec) {
 	static const char * const pic_struct_names[16] = {
 		"progressive frame", "top field", "bottom field", "top then bottom",
 		"bottom then top", "top then bottom then top",
@@ -83,7 +83,7 @@ static int parse_pic_timing(Edge264Decoder *dec) {
 
 
 
-static int parse_pan_scan_rect(Edge264Decoder *dec) {
+static int parse_pan_scan_rect(Edge264MvcDecoder *dec) {
 	unsigned pan_scan_rect_id = get_ue32(&dec->gb, 4294967294);
 	int pan_scan_rect_cancel_flag = get_u1(&dec->gb);
 	log_dec(dec, "    pan_scan_rect_id: %u\n"
@@ -108,8 +108,8 @@ static int parse_pan_scan_rect(Edge264Decoder *dec) {
 
 
 
-typedef int (*SEI_Parser)(Edge264Decoder *dec);
-int ADD_VARIANT(parse_sei)(Edge264Decoder *dec, Edge264UnrefCb unref_cb, void *unref_arg)
+typedef int (*SEI_Parser)(Edge264MvcDecoder *dec);
+int ADD_VARIANT(parse_sei)(Edge264MvcDecoder *dec, Edge264MvcUnrefCb unref_cb, void *unref_arg)
 {
 	// FIXME reduce array size to minimum!
 	static const char * const payloadType_names[206] = {
@@ -146,7 +146,7 @@ int ADD_VARIANT(parse_sei)(Edge264Decoder *dec, Edge264UnrefCb unref_cb, void *u
 		} while (byte == 255);
 		log_dec(dec, "  - payloadType: %s (%u)\n",
 			payloadType <= 205 ? payloadType_names[payloadType] : "Reserved", payloadType);
-		Edge264GetBits start = dec->gb;
+		Edge264MvcGetBits start = dec->gb;
 		int sei_ret = ENOTSUP;
 		if (payloadType <= 205 && parse_sei_message[payloadType])
 			sei_ret = parse_sei_message[payloadType](dec);

@@ -86,7 +86,7 @@
 # and slice_beta_offset_div2; the base hash is anchored to FFmpeg's decode. A
 # multithreaded decoder that deblocks a slice decoded concurrently with its predecessor
 # using the parameters of the slice completing the picture produces wrong, run-to-run
-# varying pixels here, so this line FAILs under EDGE264_THREADS on the unfixed decoder.
+# varying pixels here, so this line FAILs under EDGE264MVC_THREADS on the unfixed decoder.
 2d-synthetic/slice_deblock_offsets 30 0 234eea002d0793d20270826d36c7a6fb -
 mvc/MVCDS-4 9 1 4b450245d8756f326571edeb914bb783 3713ff32768c93a46ec0f09f175a4fc1
 mvc/MVCDS-5 9 1 4b450245d8756f326571edeb914bb783 8116a281859da53e2bff6cf2e56655ff

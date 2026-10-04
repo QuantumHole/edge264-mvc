@@ -1,4 +1,4 @@
-#include "edge264_internal.h"
+#include "edge264mvc_internal.h"
 
 // This file is compiled twice: once for CAVLC and once for CABAC
 #undef CAFUNC
@@ -9,12 +9,12 @@
 	#define CABAC 0
 #endif
 #if !CABAC
-	#define CAFUNC(f, ...) f ## _cavlc(Edge264Context *ctx, ## __VA_ARGS__)
+	#define CAFUNC(f, ...) f ## _cavlc(Edge264MvcContext *ctx, ## __VA_ARGS__)
 	#define CACALL(f, ...) f ## _cavlc(ctx, ## __VA_ARGS__)
 	#define CAJUMP(f, ...) { f ## _cavlc(ctx, ## __VA_ARGS__); return; }
 	#define CACOND(cavlc, cabac) cavlc
 #else
-	#define CAFUNC(f, ...) f ## _cabac(Edge264Context *ctx, ## __VA_ARGS__)
+	#define CAFUNC(f, ...) f ## _cabac(Edge264MvcContext *ctx, ## __VA_ARGS__)
 	#define CACALL(f, ...) f ## _cabac(ctx, ## __VA_ARGS__)
 	#define CAJUMP(f, ...) { f ## _cabac(ctx, ## __VA_ARGS__); return; }
 	#define CACOND(cavlc, cabac) cabac
@@ -80,7 +80,7 @@
  * compute a code length (v) and an offset to add to the input bits.
  */
 #if !CABAC
-	static inline int parse_total_zeros(Edge264Context *ctx, int endIdx, int TotalCoeff) {
+	static inline int parse_total_zeros(Edge264MvcContext *ctx, int endIdx, int TotalCoeff) {
 		static const uint8_t codes[27][9 * 4] = { // [tzVlcIndex][leadingZeroBits][suffix]
 			// 2x2 blocks
 			{16, 16, 16, 16, 33, 33, 33, 33, 50, 50, 50, 50, 51, 51, 51, 51, 51, 51, 51, 51, 51, 51, 51, 51, 51, 51, 51, 51, 51, 51, 51, 51, 51, 51, 51, 51},
@@ -121,7 +121,7 @@
 		return code & 15;
 	}
 	
-	static noinline int parse_residual_coeffs_cavlc(Edge264Context *ctx, int startIdx, int endIdx, int TrailingOnes, int TotalCoeff) {
+	static noinline int parse_residual_coeffs_cavlc(Edge264MvcContext *ctx, int startIdx, int endIdx, int TrailingOnes, int TotalCoeff) {
 		// parse all level values from end to start
 		int32_t level[16];
 		size_t signs = ~ctx->t.gb.msb_cache;
@@ -201,7 +201,7 @@
 		return ctx->t.gb.lsb_cache ? 1 : refill(&ctx->t.gb, 1);
 	}
 
-	static noinline int parse_residual_block_4x4_cavlc(Edge264Context *ctx, int startIdx, int i4x4, int nA, int nB) {
+	static noinline int parse_residual_block_4x4_cavlc(Edge264MvcContext *ctx, int startIdx, int i4x4, int nA, int nB) {
 		static const uint8_t nC_offset[8] = {184, 184, 80, 80, 0, 0, 0, 0};
 		static const int16_t tokens[38 * 8] = {
 			543, 539, 535, 531, 527, 522, 517, 512, // 4 <= nC < 8
@@ -275,7 +275,7 @@
 	}
 	
 	// 4:2:0 is best handled separately due to the open-ended 0000000 code and 3 bit suffixes
-	static void parse_residual_block_2x2_cavlc(Edge264Context *ctx) {
+	static void parse_residual_block_2x2_cavlc(Edge264MvcContext *ctx) {
 		static const int16_t tokens[8 * 4] = {
 			133, 133, 133, 133,
 			256, 256, 256, 256,
@@ -321,7 +321,7 @@
  * maintain, this function is designed to be simple and compact.
  */
 #if CABAC
-	static noinline void parse_residual_coeffs_cabac(Edge264Context *ctx, uint64_t significant_coeff_flags) {
+	static noinline void parse_residual_coeffs_cabac(Edge264MvcContext *ctx, uint64_t significant_coeff_flags) {
 		// Now loop on set bits to parse all non-zero coefficients.
 		int ctxIdx0 = ctx->ctxIdxOffsets[3] + 1;
 		int ctxIdx1 = ctx->ctxIdxOffsets[3] + 5;
@@ -377,7 +377,7 @@
 		} while (significant_coeff_flags != 0);
 	}
 	
-	static noinline void parse_residual_block_8x8_cabac(Edge264Context * restrict ctx, int startIdx, int endIdx) {
+	static noinline void parse_residual_block_8x8_cabac(Edge264MvcContext * restrict ctx, int startIdx, int endIdx) {
 		uint64_t significant_coeff_flags = 0;
 		int i = startIdx;
 		do {
@@ -391,7 +391,7 @@
 		parse_residual_coeffs_cabac(ctx, significant_coeff_flags);
 	}
 	
-	static noinline void parse_residual_block_cabac(Edge264Context * restrict ctx, int startIdx, int endIdx) {
+	static noinline void parse_residual_block_cabac(Edge264MvcContext * restrict ctx, int startIdx, int endIdx) {
 		// we could preload all states in a vector, but cache misses aren't an issue here
 		unsigned significant_coeff_flags = 0;
 		int i = startIdx;
@@ -980,14 +980,14 @@ static noinline void CAFUNC(parse_inter_residual)
  * 32-bit machines.
  */
 #if !CABAC
-	static inline i16x8 parse_mvd_pair_cavlc(Edge264Context *ctx, const uint8_t *absMvd_lx, int i4x4) {
+	static inline i16x8 parse_mvd_pair_cavlc(Edge264MvcContext *ctx, const uint8_t *absMvd_lx, int i4x4) {
 		int x = get_se32(&ctx->t.gb, -32768, 32767);
 		int y = get_se32(&ctx->t.gb, -32768, 32767);
 		log_mb(ctx, "[%d,%d],", x, y);
 		return (i16x8){x, y};
 	}
 #else
-	static noinline i16x8 parse_mvd_pair_cabac(Edge264Context *ctx, const uint8_t *absMvd_lx, int i4x4) {
+	static noinline i16x8 parse_mvd_pair_cabac(Edge264MvcContext *ctx, const uint8_t *absMvd_lx, int i4x4) {
 		i16x8 res;
 		for (int ctxBase = 40, i = 0;;) {
 			int sum = absMvd_lx[ctx->absMvd_A[i4x4] + i] + absMvd_lx[ctx->absMvd_B[i4x4] + i];
@@ -1516,14 +1516,14 @@ static void CAFUNC(parse_P_sub_mb, unsigned ref_idx_flags)
 		int mvs_DC = eq & 8 ? ctx->mvs_D[i] : ctx->mvs_C[i];
 		if (__builtin_expect(0xe9e9 >> eq & 1, 1)) {
 			// neighbours are addressed relative to mvs_s across the macroblock array
-			const int32_t *mvs = (const int32_t *)((const char *)mb + offsetof(Edge264Macroblock, mvs_s));
+			const int32_t *mvs = (const int32_t *)((const char *)mb + offsetof(Edge264MvcMacroblock, mvs_s));
 			i16x8 mvA = (i32x4){mvs[ctx->mvs_A[i]]};
 			i16x8 mvB = (i32x4){mvs[ctx->mvs_B[i]]};
 			i16x8 mvDC = (i32x4){mvs[mvs_DC]};
 			mvp = median16(mvA, mvB, mvDC);
 		} else {
 			int mvs_AB = eq & 1 ? ctx->mvs_A[i] : ctx->mvs_B[i];
-			const int32_t *mvs = (const int32_t *)((const char *)mb + offsetof(Edge264Macroblock, mvs_s));
+			const int32_t *mvs = (const int32_t *)((const char *)mb + offsetof(Edge264MvcMacroblock, mvs_s));
 			mvp = (i32x4){mvs[eq & 4 ? mvs_DC : mvs_AB]};
 		}
 		

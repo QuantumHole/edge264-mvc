@@ -17,9 +17,9 @@
 	#include <sys/types.h>
 	#include <unistd.h>
 #endif
-#include "edge264_internal.h"
-#include "edge264_intra.c"
-#include "edge264_inter.c"
+#include "edge264mvc_internal.h"
+#include "edge264mvc_intra.c"
+#include "edge264mvc_inter.c"
 #ifdef __wasm__
 	#define mprotect(addr, len, prot) 0
 #endif
@@ -36,7 +36,7 @@
 #define YELLOW "\e[33m"
 #define BLUE   "\e[34m"
 
-static Edge264Decoder *dec;
+static Edge264MvcDecoder *dec;
 static int count_pass;
 static int count_frames;
 static void (*log_tester)(const char *);

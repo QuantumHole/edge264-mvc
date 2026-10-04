@@ -9,7 +9,7 @@
 # inserted non-existing frames, and seeded PrevRefFrameNum / prevPicOrderCnt of
 # the dependent view from the garbage. Every later dependent POC then
 # mismatched its base, the base-driven pairing never queued them, and the DPB
-# filled until decode_nal returned ENOBUFS forever: edge264_test spun
+# filled until decode_nal returned ENOBUFS forever: edge264mvc_test spun
 # at 100% CPU on a file, and cut the movie short on stdin.
 #
 # Expected: the corrupt slice is rejected (EBADMSG) without touching decoder

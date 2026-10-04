@@ -1,7 +1,7 @@
-#include "edge264_internal.h"
+#include "edge264mvc_internal.h"
 
 #define pack_w(w0, w1) ((int)((unsigned)(w1) << 8 | (w0) & 255)) // w1 may be negative
-static int release_terminal_task_dependencies(Edge264Decoder *dec);
+static int release_terminal_task_dependencies(Edge264MvcDecoder *dec);
 
 /**
  * Wait until the frame in slot pic has made all macroblocks below addr final
@@ -11,8 +11,8 @@ static int release_terminal_task_dependencies(Edge264Decoder *dec);
  * call to await_frame_progress. Single-threaded decoding never waits, since
  * the references of a task are always complete (or concealed) when it runs.
  */
-static noinline void wait_frame_progress(Edge264Context *ctx, int pic, int32_t addr) {
-	Edge264Decoder *dec = ctx->d;
+static noinline void wait_frame_progress(Edge264MvcContext *ctx, int pic, int32_t addr) {
+	Edge264MvcDecoder *dec = ctx->d;
 	if (ctx->thread_id < 0)
 		return;
 	for (int i = 0; i < 256; i++) {
@@ -35,7 +35,7 @@ static noinline void wait_frame_progress(Edge264Context *ctx, int pic, int32_t a
 	}
 	pthread_mutex_unlock(&dec->lock);
 }
-static always_inline void await_frame_progress(Edge264Context *ctx, int pic, int32_t addr) {
+static always_inline void await_frame_progress(Edge264MvcContext *ctx, int pic, int32_t addr) {
 	if (__builtin_expect(__atomic_load_n(&ctx->d->next_deblock_addr[pic], __ATOMIC_ACQUIRE) < addr, 0))
 		wait_frame_progress(ctx, pic, addr);
 }
@@ -1158,7 +1158,7 @@ static void decode_inter_chroma(int kind, int integer, int w, int h, size_t sstr
  * | bipred=2 | no_weight  | no_weight    | no_weight  | implicit2    |
  * +----------+------------+--------------+------------+--------------+
  */
-static void noinline decode_inter(Edge264Context *ctx, int i, int w, int h) {
+static void noinline decode_inter(Edge264MvcContext *ctx, int i, int w, int h) {
 	static int8_t shift_Y_8bit[46] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15};
 	static int8_t shift_C_8bit[22] = {0, 0, 0, 0, 0, 0, 0, 0, 1, 2, 3, 4, 5, 6, 7, 7, 7, 7, 7, 7, 7, 7};
 	

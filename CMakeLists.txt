@@ -1,5 +1,5 @@
 # ==============================================================================
-# edge264-mvc — CMakeLists.txt
+# edge264-mvc - CMakeLists.txt
 # Generated with AI assistance by Claude Sonnet 4.6 (claude-sonnet-4-6).
 #
 # Thin wrapper that delegates all build logic to the Makefile.
@@ -7,19 +7,19 @@
 # imported target edge264mvc::edge264mvc for use with target_link_libraries.
 #
 # The only value to keep in sync with the Makefile when it changes is
-# EDGE264_MAJOR below.
+# EDGE264MVC_MAJOR below.
 # ==============================================================================
 
 cmake_minimum_required(VERSION 3.14)
 project(edge264mvc VERSION 2.0 LANGUAGES C)
 
 # Keep in sync with MAJOR in the Makefile.
-set(EDGE264_MAJOR 2)
+set(EDGE264MVC_MAJOR 2)
 
 # Optional: forward a VARIANTS string to the Makefile
-# (e.g. -DEDGE264_VARIANTS=x86-64-v2,x86-64-v3,logs).
-set(EDGE264_VARIANTS "" CACHE STRING
-    "Comma-separated edge264 build variants (x86-64-v2, x86-64-v3, logs)")
+# (e.g. -DEDGE264MVC_VARIANTS=x86-64-v2,x86-64-v3,logs).
+set(EDGE264MVC_VARIANTS "" CACHE STRING
+    "Comma-separated edge264-mvc build variants (x86-64-v2, x86-64-v3, logs)")
 
 include(ExternalProject)
 
@@ -51,11 +51,11 @@ endif()
 if(_static STREQUAL "yes")
   set(_libfile libedge264mvc.a)
 elseif(_os STREQUAL "macos")
-  set(_libfile libedge264mvc.${EDGE264_MAJOR}.dylib)
+  set(_libfile libedge264mvc.${EDGE264MVC_MAJOR}.dylib)
 elseif(_os STREQUAL "linux")
-  set(_libfile libedge264mvc.so.${EDGE264_MAJOR})
+  set(_libfile libedge264mvc.so.${EDGE264MVC_MAJOR})
 elseif(_os STREQUAL "windows")
-  set(_libfile edge264mvc.${EDGE264_MAJOR}.dll)
+  set(_libfile edge264mvc.${EDGE264MVC_MAJOR}.dll)
 elseif(_os STREQUAL "android")
   set(_libfile libedge264mvc.so)
 elseif(_os STREQUAL "wasm")
@@ -83,8 +83,8 @@ if(CMAKE_C_FLAGS)
   list(APPEND _args "CFLAGS=${CMAKE_C_FLAGS}")
 endif()
 
-if(EDGE264_VARIANTS)
-  list(APPEND _args VARIANTS=${EDGE264_VARIANTS})
+if(EDGE264MVC_VARIANTS)
+  list(APPEND _args VARIANTS=${EDGE264MVC_VARIANTS})
 endif()
 
 # Android: use the NDK's llvm-ar co-located with the compiler to avoid a

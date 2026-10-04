@@ -2,8 +2,8 @@
  * Every file should be compilable on its own by including this file.
  */
 
-#ifndef edge264_COMMON_H
-#define edge264_COMMON_H
+#ifndef edge264mvc_COMMON_H
+#define edge264mvc_COMMON_H
 
 #include <assert.h>
 #include <errno.h>
@@ -53,12 +53,10 @@
 #include "../edge264mvc.h"
 
 // Internal decoder types, formerly the public API of edge264
-typedef struct Edge264MvcDecoder Edge264Decoder;
-typedef Edge264MvcLogCb Edge264LogCb;
-typedef void (*Edge264UnrefCb)(int ret, void *unref_arg);
-typedef void (*Edge264AllocCb)(void **samples, unsigned samples_size, void **mbs, unsigned mbs_size, int errno_on_fail, void *alloc_arg);
-typedef void (*Edge264FreeCb)(void *samples, void *mbs, void *alloc_arg);
-typedef struct Edge264Frame {
+typedef void (*Edge264MvcUnrefCb)(int ret, void *unref_arg);
+typedef void (*Edge264MvcAllocCb)(void **samples, unsigned samples_size, void **mbs, unsigned mbs_size, int errno_on_fail, void *alloc_arg);
+typedef void (*Edge264MvcFreeCb)(void *samples, void *mbs, void *alloc_arg);
+typedef struct Edge264MvcOutput {
 	const uint8_t *samples[3]; // Y/Cb/Cr planes
 	const uint8_t *samples_mvc[3]; // second view
 	const uint8_t *mb_errors; // unused, always NULL
@@ -79,7 +77,7 @@ typedef struct Edge264Frame {
 	int64_t DisplayPoc_mvc; // second view
 	int16_t frame_crop_offsets[4]; // {top,right,bottom,left}
 	void *return_arg;
-} Edge264Frame;
+} Edge264MvcOutput;
 
 
 
@@ -115,7 +113,7 @@ typedef struct {
 	const uint8_t *end; // first byte past end of buffer, capped to 001 or 000 sequence when detected
 	union { size_t lsb_cache; size_t range; };
 	union { size_t msb_cache; size_t offset; };
-} Edge264GetBits;
+} Edge264MvcGetBits;
 
 
 
@@ -127,7 +125,7 @@ typedef struct {
  * technique we spare the use of intermediate caches thus reduce memory writes.
  * 
  * In 9.3.3.1.1, ctxIdxInc is always the result of flagA+flagB or flagA+2*flagB,
- * so we use Edge264MbFlags to pack flags together to allow adding them in
+ * so we use Edge264MvcMbFlags to pack flags together to allow adding them in
  * parallel with flagsA + flagsB + (flagsB & twice).
  * 
  * CABAC bit values of 8x8 blocks are stored in compact 8-bit patterns that
@@ -150,8 +148,8 @@ typedef union {
 		union { uint8_t inter_eqs[4]; uint32_t inter_eqs_s; }; // 2 flags per 4x4 block storing right/bottom equality of mvs&ref, not part of ctxIdxInc but packed here to save space
 	};
 	i8x16 v;
-} Edge264MbFlags;
-static const Edge264MbFlags flags_twice = {
+} Edge264MvcMbFlags;
+static const Edge264MvcMbFlags flags_twice = {
 	.CodedBlockPatternChromaDC = 1,
 	.CodedBlockPatternChromaAC = 1,
 	.coded_block_flags_16x16 = {1, 1, 1},
@@ -174,13 +172,13 @@ typedef struct {
 	union { uint32_t bits[2]; uint64_t bits_l; }; // {cbp/ref_idx_nz, cbf_Y/Cb/Cr 8x8}
 	union { int8_t nC_Y[16]; i8x16 nC_Y_v; }; // copy of the luma nC for deblocking
 	// fields used by mbCol thus kept together for slice prefetching (do not reorder!)
-	Edge264MbFlags f;
+	Edge264MvcMbFlags f;
 	union { int8_t refIdx[8]; int32_t refIdx_s[2]; int64_t refIdx_l; }; // [LX][i8x8]
 	union { int8_t refPic[8]; int32_t refPic_s[2]; int64_t refPic_l; }; // [LX][i8x8]
 	union { int16_t mvs[64]; int32_t mvs_s[32]; int64_t mvs_l[16]; i16x8 mvs_v[8]; }; // [LX][i4x4][compIdx]
-} Edge264Macroblock;
-_Static_assert(sizeof(Edge264Macroblock) == 192, "Edge264Macroblock should fill 3 cache lines");
-static Edge264Macroblock unavail_mb = {
+} Edge264MvcMacroblock;
+_Static_assert(sizeof(Edge264MvcMacroblock) == 192, "Edge264MvcMacroblock should fill 3 cache lines");
+static Edge264MvcMacroblock unavail_mb = {
 	.f.mb_skip_flag = 1,
 	.f.mb_type_I_NxN = 1,
 	.f.mb_type_B_Direct = 1,
@@ -200,8 +198,8 @@ typedef struct {
 	union { int8_t Intra4x4PredMode[16]; int32_t Intra4x4PredMode_s[4]; i8x16 Intra4x4PredMode_v; }; // [i4x4]
 	union { int8_t nC[48]; int32_t nC_s[12]; int64_t nC_l[6]; i8x16 nC_v[3]; }; // for CAVLC and CABAC
 	union { uint8_t absMvd[64]; uint64_t absMvd_l[8]; i8x16 absMvd_v[4]; }; // [LX][i4x4][compIdx]
-} Edge264MbCache;
-static const Edge264MbCache unavail_mbc = {
+} Edge264MvcMbCache;
+static const Edge264MvcMbCache unavail_mbc = {
 	.Intra4x4PredMode = {-2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2, -2},
 };
 
@@ -247,7 +245,7 @@ typedef struct {
 	union { int16_t frame_crop_offsets[4]; int64_t frame_crop_offsets_l; }; // {top,right,bottom,left}
 	union { uint8_t weightScale4x4[6][16]; i8x16 weightScale4x4_v[6]; };
 	union { uint8_t weightScale8x8[6][64]; i8x16 weightScale8x8_v[6*4]; };
-} Edge264SeqParameterSet;
+} Edge264MvcSeqParameterSet;
 typedef struct {
 	int8_t entropy_coding_mode_flag; // 0..1
 	int8_t bottom_field_pic_order_in_frame_present_flag; // 0..1
@@ -264,16 +262,16 @@ typedef struct {
 	int8_t second_chroma_qp_index_offset; // -12..12
 	union { uint8_t weightScale4x4[6][16]; i8x16 weightScale4x4_v[6]; };
 	union { uint8_t weightScale8x8[6][64]; i8x16 weightScale8x8_v[6*4]; };
-} Edge264PicParameterSet;
+} Edge264MvcPicParameterSet;
 
 
 
 /**
  * This structure stores all the data necessary to decode a slice, such that it
- * can be copied into Edge264Context when a worker starts decoding it.
+ * can be copied into Edge264MvcContext when a worker starts decoding it.
  */
 typedef struct {
-	Edge264GetBits gb; // must be first in struct to use the same pointer for bitstream functions
+	Edge264MvcGetBits gb; // must be first in struct to use the same pointer for bitstream functions
 	int8_t slice_type; // 0..2
 	int8_t field_pic_flag; // 0..1
 	int8_t bottom_field_flag; // 0..1
@@ -299,18 +297,18 @@ typedef struct {
 	uint32_t first_mb_in_slice; // 0..139263
 	uint32_t prev_long_term_frames;
 	union { int8_t QP[3]; i8x4 QP_s; }; // same as mb
-	Edge264UnrefCb unref_cb; // copy from decode_NAL
+	Edge264MvcUnrefCb unref_cb; // copy from decode_NAL
 	void *unref_arg; // copy from decode_NAL
-	Edge264Macroblock *mb_buffer;
-	Edge264Macroblock *mbCol_buffer;
+	Edge264MvcMacroblock *mb_buffer;
+	Edge264MvcMacroblock *mbCol_buffer;
 	uint8_t *samples_buffers[32];
 	union { uint16_t samples_clip[3][8]; i16x8 samples_clip_v[3]; }; // [iYCbCr], maximum sample value
 	union { int8_t RefPicList[2][32]; int64_t RefPicList_l[8]; i8x16 RefPicList_v[4]; };
 	union { int16_t diff_poc[32]; i16x8 diff_poc_v[4]; };
-	Edge264PicParameterSet pps;
+	Edge264MvcPicParameterSet pps;
 	int16_t explicit_weights[3][64]; // [iYCbCr][LX][RefIdx]
 	int8_t explicit_offsets[3][64];
-} Edge264Task;
+} Edge264MvcTask;
 
 
 
@@ -318,8 +316,8 @@ typedef struct {
  * This structure stores the context data needed by each thread to decode
  * a slice, such that we can dedicate a single register pointer to it.
  */
-typedef struct Edge264Context {
-	Edge264Task t; // must be first in struct to use the same pointer for bitstream functions
+typedef struct Edge264MvcContext {
+	Edge264MvcTask t; // must be first in struct to use the same pointer for bitstream functions
 	int8_t thread_id;
 	int8_t mb_qp_delta_nz; // 0..1
 	int8_t col_short_term; // 0..1
@@ -328,17 +326,17 @@ typedef struct Edge264Context {
 	int32_t CurrMbAddr;
 	int32_t mb_skip_run;
 	uint8_t *samples_mb[3]; // address of top-left byte of each plane in current macroblock
-	Edge264Macroblock * _mb; // backup storage for macro mb
-	Edge264MbCache * _mbc; // backup storage for macro mbc, the ring entry of mb
-	Edge264MbCache *mbc_ring; // first entry of the ring (after the copy of its last entry)
+	Edge264MvcMacroblock * _mb; // backup storage for macro mb
+	Edge264MvcMbCache * _mbc; // backup storage for macro mbc, the ring entry of mb
+	Edge264MvcMbCache *mbc_ring; // first entry of the ring (after the copy of its last entry)
 	int32_t mbc_ring_size; // pic_width_in_mbs + 2
-	const Edge264Macroblock * _mbA; // backup storage for macro mbA
-	const Edge264Macroblock * _mbB; // backup storage for macro mbB
-	const Edge264Macroblock * _mbC; // backup storage for macro mbC
-	const Edge264Macroblock * _mbD; // backup storage for macro mbD
-	const Edge264Macroblock *mbCol;
-	Edge264Decoder *d;
-	Edge264MbFlags inc; // increments for CABAC indices of macroblock syntax elements
+	const Edge264MvcMacroblock * _mbA; // backup storage for macro mbA
+	const Edge264MvcMacroblock * _mbB; // backup storage for macro mbB
+	const Edge264MvcMacroblock * _mbC; // backup storage for macro mbC
+	const Edge264MvcMacroblock * _mbD; // backup storage for macro mbD
+	const Edge264MvcMacroblock *mbCol;
+	Edge264MvcDecoder *d;
+	Edge264MvcMbFlags inc; // increments for CABAC indices of macroblock syntax elements
 	union { int8_t unavail4x4[48]; i8x16 unavail4x4_v[3]; }; // unavailability of neighbouring A/B/C/D blocks
 	union { int8_t nC_inc[3][16]; i8x16 nC_inc_v[3]; }; // stores the intra/inter default increment from unavailable neighbours (9.3.3.1.1.9)
 	union { uint8_t cabac[1024]; i8x16 cabac_v[64]; };
@@ -381,12 +379,12 @@ typedef struct Edge264Context {
 	
 	// Logging context
 	uint64_t log_base_us; // timestamp of decoder initialization
-	Edge264LogCb log_cb;
+	Edge264MvcLogCb log_cb;
 	void *log_arg;
 	const char *log_indent;
 	uint16_t log_pos; // next writing position in log_buf
 	char log_buf[4096];
-} Edge264Context;
+} Edge264MvcContext;
 #define mb ctx->_mb
 #define mbc ctx->_mbc
 #define mbA ctx->_mbA
@@ -419,7 +417,7 @@ typedef struct Edge264Context {
  *   retrieval in get_frames_queue have values (1, 1)
  * _ pictures sent to get_frame and waiting to be returned have values (0, 1)
  */
-typedef int (*Parser)(Edge264Decoder *dec, Edge264UnrefCb unref_cb, void *unref_arg);
+typedef int (*Parser)(Edge264MvcDecoder *dec, Edge264MvcUnrefCb unref_cb, void *unref_arg);
 typedef struct {
 	int8_t pic;
 	int8_t deblock;
@@ -428,10 +426,10 @@ typedef struct {
 	int8_t FilterOffsetB;
 	int32_t first_mb;
 	int32_t keep_mb;
-} Edge264PendingSlice; // a decoded slice left for another thread to deblock and publish in order
+} Edge264MvcPendingSlice; // a decoded slice left for another thread to deblock and publish in order
 struct Edge264MvcDecoder {
 	// minimal set of fields preserved across flushes
-	Edge264GetBits gb; // must be first in the struct to use the same pointer for bitstream functions
+	Edge264MvcGetBits gb; // must be first in the struct to use the same pointer for bitstream functions
 	int8_t n_threads; // 0 to disable multithreading
 	int8_t nal_unit_type; // 5 significant bits
 	int32_t plane_size_Y;
@@ -439,13 +437,13 @@ struct Edge264MvcDecoder {
 	int32_t prevFrameId;
 	int32_t next_dispnum; // monotonic display-order counter, assigned to each frame when it is bumped for output
 	uint32_t frame_flip_bits; // bitfield storing target values of bit 0 in mb->recovery_bits for each frame
-	Edge264AllocCb alloc_cb;
-	Edge264FreeCb free_cb;
+	Edge264MvcAllocCb alloc_cb;
+	Edge264MvcFreeCb free_cb;
 	void *alloc_arg;
 	void *(*worker_loop)(void *);
 	uint8_t *samples_buffers[32];
-	Edge264Macroblock *mb_buffers[32];
-	void *mbc_ring_allocs[17]; // per worker (thread_id + 1), see Edge264MbCache
+	Edge264MvcMacroblock *mb_buffers[32];
+	void *mbc_ring_allocs[17]; // per worker (thread_id + 1), see Edge264MvcMbCache
 	int32_t mbc_ring_sizes[17];
 	Parser parse_nal_unit[32];
 	pthread_t threads[16];
@@ -453,7 +451,7 @@ struct Edge264MvcDecoder {
 	pthread_cond_t task_ready;
 	pthread_cond_t frame_progress[32]; // signals next_deblock_addr[i] has reached progress_wake_addr[i]
 	pthread_cond_t task_complete;
-	Edge264Frame out;
+	Edge264MvcOutput out;
 	int32_t max_frame_mbs; // largest frame accepted, in macroblocks
 	int8_t want_frame; // send_nal returned EDGE264MVC_AGAIN, so receive_frame waits for a frame
 	int8_t ended; // send_end was called, so receive_frame drains to EDGE264MVC_END
@@ -478,12 +476,12 @@ struct Edge264MvcDecoder {
 	int32_t prevPicOrderCnt[2]; // one per view
 	int32_t TopFieldOrderCnt; // value for the current incomplete frame, unaffected by mmco5
 	int32_t BottomFieldOrderCnt;
-	Edge264SeqParameterSet sps;
-	Edge264SeqParameterSet ssps;
+	Edge264MvcSeqParameterSet sps;
+	Edge264MvcSeqParameterSet ssps;
 	int64_t OutputPocBase[2];
-	int64_t PrevOutputUnwrapped[2]; // previous exported DisplayPoc per view, kept strictly increasing (see edge264_unwrap_output_poc)
+	int64_t PrevOutputUnwrapped[2]; // previous exported DisplayPoc per view, kept strictly increasing (see edge264mvc_unwrap_output_poc)
 	int8_t HavePrevOutputPoc[2];
-	Edge264PicParameterSet PPS[4];
+	Edge264MvcPicParameterSet PPS[4];
 	
 	// frame buffer as a Structure Of Arrays
 	uint32_t short_term_frames; // bitfield for indices of short-term or non-existing frame/view references for current view
@@ -510,18 +508,18 @@ struct Edge264MvcDecoder {
 	volatile union { uint32_t task_dependencies[16]; i32x4 task_dependencies_v[4]; }; // frames on which each task depends to start
 	union { int8_t taskPics[16]; i8x16 taskPics_v; }; // values of currPic for each task
 	uint64_t deblock_pending_slices; // used entries of deblock_pending
-	Edge264PendingSlice deblock_pending[64];
+	Edge264MvcPendingSlice deblock_pending[64];
 	int32_t progress_wake_addr[32]; // lowest next_deblock_addr a task waits for on each frame, or INT_MAX
 	uint32_t task_seq[16]; // decoding order of each task, workers pick the oldest ready task
 	uint32_t next_task_seq;
-	Edge264Task tasks[16];
+	Edge264MvcTask tasks[16];
 	uint32_t frame_flags[32]; // EDGE264MVC_VIEW_* of each frame, OR-ed atomically by the workers
 	int64_t frame_pts[32]; // values sent with the NAL starting each frame
 	int64_t frame_user_data[32];
 	
 	// Logging context
 	uint64_t log_base_us; // timestamp of decoder initialization
-	Edge264LogCb log_cb;
+	Edge264MvcLogCb log_cb;
 	void *log_arg;
 	uint16_t log_pos; // next writing position in log_buf
 	char log_buf[9416];
@@ -538,7 +536,7 @@ struct Edge264MvcDecoder {
 #define big_endian64 __builtin_bswap64
 
 #if UINT_MAX != 4294967295U || ULLONG_MAX != 18446744073709551615U
-	#error "edge264 currently expects 32-bit int and 64-bit long long"
+	#error "edge264-mvc currently expects 32-bit int and 64-bit long long"
 #endif
 #ifndef WORD_BIT
 	#define WORD_BIT 32
@@ -580,8 +578,8 @@ struct Edge264MvcDecoder {
  * entry past the end of the ring (where the last entry reads B) and the last
  * entry before its start (where the first entry reads A).
  */
-static always_inline void advance_mbc(Edge264Context *ctx) {
-	Edge264MbCache *e = ctx->_mbc;
+static always_inline void advance_mbc(Edge264MvcContext *ctx) {
+	Edge264MvcMbCache *e = ctx->_mbc;
 	if (e == ctx->mbc_ring)
 		e[ctx->mbc_ring_size] = *e;
 	if (++e == ctx->mbc_ring + ctx->mbc_ring_size) {
@@ -634,7 +632,7 @@ static const int8_t y444[16] = {0, 0, 4, 4, 0, 0, 4, 4, 8, 8, 12, 12, 8, 8, 12, 
 static const int8_t x420[8] = {0, 4, 0, 4, 0, 4, 0, 4};
 static const int8_t y420[8] = {0, 0, 4, 4, 0, 0, 4, 4};
 
-// really big, defined in edge264.c
+// really big, defined in edge264mvc.c
 extern const int8_t cabac_context_init[4][1024][2] __attribute__((aligned(16)));
 
 
@@ -1256,10 +1254,10 @@ static always_inline i8x16 pack_absMvd(i16x8 a) {
 }
 // Bits left to read before the end of the NAL, negative once the reader overran
 // it - in 64 bits, since a reader on a damaged NAL may be far past its end.
-static always_inline int64_t bits_left(Edge264GetBits *gb) {
+static always_inline int64_t bits_left(Edge264MvcGetBits *gb) {
 	return (int64_t)(gb->end - gb->CPB) * 8 + SIZE_BIT * 2 - 1 - ctz(gb->lsb_cache);
 }
-static always_inline int rbsp_end(Edge264GetBits *gb, int trailing_bit) {
+static always_inline int rbsp_end(Edge264MvcGetBits *gb, int trailing_bit) {
 	int64_t bits_to_end = bits_left(gb) - trailing_bit;
 	// all bits after trailing set bit must be zero AND there must be 0-7 bits left before end (0 for no trailing bit)
 	return gb->msb_cache == (size_t)trailing_bit << (SIZE_BIT - 1) &&
@@ -1284,7 +1282,7 @@ static always_inline int rbsp_end(Edge264GetBits *gb, int trailing_bit) {
 		return (c & 0xf) | (c >> 12 & 0xf0);
 	}
 #endif
-static unsigned refs_to_mask(Edge264Task *t) {
+static unsigned refs_to_mask(Edge264MvcTask *t) {
 	i8x16 a = t->RefPicList_v[0];
 	i8x16 b = t->RefPicList_v[2];
 	i16x8 a07 = cvtlo8s16(a);
@@ -1299,7 +1297,7 @@ static unsigned refs_to_mask(Edge264Task *t) {
 	u32x4 e = d | (u32x4)shr128(d, 8);
 	return e[0];
 }
-static always_inline unsigned ready_frames(Edge264Decoder *c) {
+static always_inline unsigned ready_frames(Edge264MvcDecoder *c) {
 	// next_deblock_addr is written without the lock by worker threads (the
 	// deblock frontier and the INT_MAX completion flag), so read every entry
 	// atomically here rather than with a wide vector load: a non-atomic vector
@@ -1314,13 +1312,13 @@ static always_inline unsigned ready_frames(Edge264Decoder *c) {
 // progress. In multithreaded mode a task may start as soon as each of its
 // references is complete or has such a writer, and then waits for the rows it
 // needs in wait_frame_progress, which lets consecutive dependent frames overlap.
-static always_inline unsigned writing_frames(Edge264Decoder *dec) {
+static always_inline unsigned writing_frames(Edge264MvcDecoder *dec) {
 	unsigned writing = 0;
 	for (unsigned b = dec->busy_tasks; b; b &= b - 1)
 		writing |= 1u << dec->taskPics[__builtin_ctz(b)];
 	return writing;
 }
-static always_inline int oldest_task(Edge264Decoder *dec, unsigned tasks) {
+static always_inline int oldest_task(Edge264MvcDecoder *dec, unsigned tasks) {
 	int task_id = tasks ? __builtin_ctz(tasks) : 0;
 	for (unsigned r = tasks & (tasks - 1); r; r &= r - 1) {
 		int i = __builtin_ctz(r);
@@ -1329,10 +1327,10 @@ static always_inline int oldest_task(Edge264Decoder *dec, unsigned tasks) {
 	}
 	return task_id;
 }
-static always_inline unsigned usable_frames(Edge264Decoder *c) {
+static always_inline unsigned usable_frames(Edge264MvcDecoder *c) {
 	return ready_frames(c) | (c->n_threads ? writing_frames(c) : 0);
 }
-static always_inline unsigned ready_tasks(Edge264Decoder *c) {
+static always_inline unsigned ready_tasks(Edge264MvcDecoder *c) {
 	i32x4 not_ready = ~set32(usable_frames(c));
 	i32x4 a = (c->task_dependencies_v[0] & not_ready) == 0;
 	i32x4 b = (c->task_dependencies_v[1] & not_ready) == 0;
@@ -1340,7 +1338,7 @@ static always_inline unsigned ready_tasks(Edge264Decoder *c) {
 	i32x4 e = (c->task_dependencies_v[3] & not_ready) == 0;
 	return c->pending_tasks & movemask(packs16(packs32(a, b), packs32(d, e)));
 }
-static always_inline unsigned depended_frames(Edge264Decoder *dec) {
+static always_inline unsigned depended_frames(Edge264MvcDecoder *dec) {
 	u32x4 a = dec->task_dependencies_v[0] | dec->task_dependencies_v[1] |
 	          dec->task_dependencies_v[2] | dec->task_dependencies_v[3];
 	u32x4 b = a | (u32x4)shr128(a, 8);
@@ -1358,14 +1356,14 @@ static always_inline unsigned depended_frames(Edge264Decoder *dec) {
 // its last write to the frame, so the window between it and the busy-bit clear
 // (taken under the lock after the benchmark log) is benign and excluding it
 // avoids stalling the parser on every frame completion.
-static always_inline unsigned inflight_frames(Edge264Decoder *dec) {
+static always_inline unsigned inflight_frames(Edge264MvcDecoder *dec) {
 	unsigned inflight = 0;
 	for (unsigned b = dec->busy_tasks; b; b &= b - 1)
 		inflight |= 1u << dec->taskPics[__builtin_ctz(b)];
 	return inflight & ~ready_frames(dec);
 }
 // Wake the tasks waiting on the progress of frame pic (lock held).
-static always_inline void wake_frame_waiters(Edge264Decoder *dec, int pic) {
+static always_inline void wake_frame_waiters(Edge264MvcDecoder *dec, int pic) {
 	if (dec->progress_wake_addr[pic] != INT_MAX) {
 		__atomic_store_n(&dec->progress_wake_addr[pic], INT_MAX, __ATOMIC_RELAXED);
 		pthread_cond_broadcast(&dec->frame_progress[pic]);
@@ -1374,7 +1372,7 @@ static always_inline void wake_frame_waiters(Edge264Decoder *dec, int pic) {
 // Advance the deblocking frontier of frame pic (lock not held), waking the
 // tasks waiting on it only once it reaches the lowest address they asked for,
 // so the frames being decoded do not wake every waiter at each row.
-static always_inline void publish_frame_progress(Edge264Decoder *dec, int pic, int32_t addr) {
+static always_inline void publish_frame_progress(Edge264MvcDecoder *dec, int pic, int32_t addr) {
 	__atomic_store_n(&dec->next_deblock_addr[pic], addr, __ATOMIC_SEQ_CST);
 	if (dec->n_threads && addr >= __atomic_load_n(&dec->progress_wake_addr[pic], __ATOMIC_SEQ_CST)) {
 		pthread_mutex_lock(&dec->lock);
@@ -1388,7 +1386,7 @@ static always_inline void publish_frame_progress(Edge264Decoder *dec, int pic, i
 // caller's next check pairs with the seq_cst store-then-load in
 // publish_frame_progress, so either the waiter sees the new frontier or the
 // publisher sees the waiter.
-static always_inline void wait_frame_locked(Edge264Decoder *dec, int pic, int32_t addr) {
+static always_inline void wait_frame_locked(Edge264MvcDecoder *dec, int pic, int32_t addr) {
 	if (addr < dec->progress_wake_addr[pic])
 		__atomic_store_n(&dec->progress_wake_addr[pic], addr, __ATOMIC_SEQ_CST);
 	if (__atomic_load_n(&dec->next_deblock_addr[pic], __ATOMIC_SEQ_CST) < addr)
@@ -1422,7 +1420,7 @@ static const char *ret_to_str(int ret) {
 	#define log_dec(dec, ...) {\
 		if (dec->log_pos < sizeof(dec->log_buf))\
 			dec->log_pos += snprintf(dec->log_buf + dec->log_pos, sizeof(dec->log_buf) - dec->log_pos, __VA_ARGS__);}
-	static noinline int print_dec(Edge264Decoder *dec, const char *suffix, int ret) {
+	static noinline int print_dec(Edge264MvcDecoder *dec, const char *suffix, int ret) {
 		int pos = dec->log_pos + snprintf(dec->log_buf + dec->log_pos, sizeof(dec->log_buf) - dec->log_pos, suffix, ret_to_str(ret));
 		dec->log_pos = 0;
 		if (pos >= sizeof(dec->log_buf))
@@ -1434,7 +1432,7 @@ static const char *ret_to_str(int ret) {
 	#define log_mb(ctx, ...) {\
 		if (ctx->log_pos < sizeof(ctx->log_buf))\
 			ctx->log_pos += snprintf(ctx->log_buf + ctx->log_pos, sizeof(ctx->log_buf) - ctx->log_pos, __VA_ARGS__);}
-	static inline int print_mb(Edge264Context *ctx) {
+	static inline int print_mb(Edge264MvcContext *ctx) {
 		int pos = ctx->log_pos;
 		ctx->log_pos = 0;
 		if (pos >= sizeof(ctx->log_buf))
@@ -1480,61 +1478,61 @@ static always_inline const char *unsup_if(int cond) { return cond ? " # unsuppor
  * Function declarations used across files are put in a single block here
  * instead of .h files because they are so few.
  */
-// edge264_bitstream.c
-static inline size_t get_bytes(Edge264GetBits *gb, int nbytes);
-static noinline int refill(Edge264GetBits *gb, int ret);
-static noinline int get_u1(Edge264GetBits *gb);
-static noinline unsigned get_uv(Edge264GetBits *gb, int v);
-static noinline unsigned get_ue16(Edge264GetBits *gb, unsigned upper);
-static noinline int get_se16(Edge264GetBits *gb, int lower, int upper);
+// edge264mvc_bitstream.c
+static inline size_t get_bytes(Edge264MvcGetBits *gb, int nbytes);
+static noinline int refill(Edge264MvcGetBits *gb, int ret);
+static noinline int get_u1(Edge264MvcGetBits *gb);
+static noinline unsigned get_uv(Edge264MvcGetBits *gb, int v);
+static noinline unsigned get_ue16(Edge264MvcGetBits *gb, unsigned upper);
+static noinline int get_se16(Edge264MvcGetBits *gb, int lower, int upper);
 #if SIZE_BIT == 32
-	static noinline unsigned get_ue32(Edge264GetBits *gb, unsigned upper);
-	static noinline int get_se32(Edge264GetBits *gb, int lower, int upper);
+	static noinline unsigned get_ue32(Edge264MvcGetBits *gb, unsigned upper);
+	static noinline int get_se32(Edge264MvcGetBits *gb, int lower, int upper);
 #else
 	#define get_ue32 get_ue16
 	#define get_se32 get_se16
 #endif
-static noinline int renorm_bits(Edge264Context * restrict ctx, int bits);
-static int renorm_fixed(Edge264Context * restrict ctx, int ret);
-static inline int get_ae_inline(Edge264Context * restrict ctx, int ctxIdx);
-static noinline int get_ae(Edge264Context * restrict ctx, int ctxIdx);
-static inline int get_bypass(Edge264Context *ctx);
-static int cabac_start(Edge264Context *ctx);
-static int cabac_terminate(Edge264Context *ctx);
-static void cabac_init(Edge264Context *ctx);
+static noinline int renorm_bits(Edge264MvcContext * restrict ctx, int bits);
+static int renorm_fixed(Edge264MvcContext * restrict ctx, int ret);
+static inline int get_ae_inline(Edge264MvcContext * restrict ctx, int ctxIdx);
+static noinline int get_ae(Edge264MvcContext * restrict ctx, int ctxIdx);
+static inline int get_bypass(Edge264MvcContext *ctx);
+static int cabac_start(Edge264MvcContext *ctx);
+static int cabac_terminate(Edge264MvcContext *ctx);
+static void cabac_init(Edge264MvcContext *ctx);
 
-// edge264_deblock.c
-static noinline void deblock_mb(Edge264Context *ctx);
+// edge264mvc_deblock.c
+static noinline void deblock_mb(Edge264MvcContext *ctx);
 
-// edge264_inter.c
-static void noinline decode_inter(Edge264Context *ctx, int i, int w, int h);
+// edge264mvc_inter.c
+static void noinline decode_inter(Edge264MvcContext *ctx, int i, int w, int h);
 
-// edge264_intra.c
+// edge264mvc_intra.c
 static cold noinline void decode_intra4x4(uint8_t * restrict p, size_t stride, int mode, i16x8 clip);
 static cold noinline void decode_intra8x8(uint8_t * restrict p, size_t stride, int mode, i16x8 clip);
 static cold noinline void decode_intra16x16(uint8_t * restrict p, size_t stride, int mode, i16x8 clip);
 static cold noinline void decode_intraChroma(uint8_t * restrict p, size_t stride, int mode, i16x8 clip);
 
-// edge264_mvpred.c
-static inline void decode_inter_16x16(Edge264Context *ctx, i16x8 mvd, int lx);
-static inline void decode_inter_8x16_left(Edge264Context *ctx, i16x8 mvd, int lx);
-static inline void decode_inter_8x16_right(Edge264Context *ctx, i16x8 mvd, int lx);
-static inline void decode_inter_16x8_top(Edge264Context *ctx, i16x8 mvd, int lx);
-static inline void decode_inter_16x8_bottom(Edge264Context *ctx, i16x8 mvd, int lx);
-static noinline void decode_direct_mv_pred(Edge264Context *ctx, unsigned direct_mask);
+// edge264mvc_mvpred.c
+static inline void decode_inter_16x16(Edge264MvcContext *ctx, i16x8 mvd, int lx);
+static inline void decode_inter_8x16_left(Edge264MvcContext *ctx, i16x8 mvd, int lx);
+static inline void decode_inter_8x16_right(Edge264MvcContext *ctx, i16x8 mvd, int lx);
+static inline void decode_inter_16x8_top(Edge264MvcContext *ctx, i16x8 mvd, int lx);
+static inline void decode_inter_16x8_bottom(Edge264MvcContext *ctx, i16x8 mvd, int lx);
+static noinline void decode_direct_mv_pred(Edge264MvcContext *ctx, unsigned direct_mask);
 
-// edge264_residual.c
-static noinline void add_idct4x4(Edge264Context *ctx, int iYCbCr, int DCidx, uint8_t *p);
-static void add_dc4x4(Edge264Context *ctx, int iYCbCr, int DCidx, uint8_t *p);
-static void add_idct8x8(Edge264Context *ctx, int iYCbCr, uint8_t *p);
-static void transform_dc4x4(Edge264Context *ctx, int iYCbCr);
-static void transform_dc2x2(Edge264Context *ctx);
+// edge264mvc_residual.c
+static noinline void add_idct4x4(Edge264MvcContext *ctx, int iYCbCr, int DCidx, uint8_t *p);
+static void add_dc4x4(Edge264MvcContext *ctx, int iYCbCr, int DCidx, uint8_t *p);
+static void add_idct8x8(Edge264MvcContext *ctx, int iYCbCr, uint8_t *p);
+static void transform_dc4x4(Edge264MvcContext *ctx, int iYCbCr);
+static void transform_dc2x2(Edge264MvcContext *ctx);
 
-// edge264_slice.c
-static noinline void parse_slice_data_cavlc(Edge264Context *ctx);
-static noinline void parse_slice_data_cabac(Edge264Context *ctx);
+// edge264mvc_slice.c
+static noinline void parse_slice_data_cavlc(Edge264MvcContext *ctx);
+static noinline void parse_slice_data_cabac(Edge264MvcContext *ctx);
 
-// edge264_headers.c
+// edge264mvc_headers.c
 #ifndef ADD_VARIANT
 	#define ADD_VARIANT(f) f
 #endif
@@ -1542,29 +1540,29 @@ void *worker_loop(void *d);
 void *worker_loop_v2(void *d);
 void *worker_loop_v3(void *d);
 void *worker_loop_log(void *d);
-int ignore_NAL_log(Edge264Decoder *dec, Edge264UnrefCb unref_cb, void *unref_arg);
-int unsup_NAL_log(Edge264Decoder *dec, Edge264UnrefCb unref_cb, void *unref_arg);
-int parse_slice_layer_without_partitioning(Edge264Decoder *dec, Edge264UnrefCb unref_cb, void *unref_arg);
-int parse_slice_layer_without_partitioning_v2(Edge264Decoder *dec, Edge264UnrefCb unref_cb, void *unref_arg);
-int parse_slice_layer_without_partitioning_v3(Edge264Decoder *dec, Edge264UnrefCb unref_cb, void *unref_arg);
-int parse_slice_layer_without_partitioning_log(Edge264Decoder *dec, Edge264UnrefCb unref_cb, void *unref_arg);
-int parse_access_unit_delimiter_log(Edge264Decoder *dec, Edge264UnrefCb unref_cb, void *unref_arg);
-int parse_sei_log(Edge264Decoder *dec, Edge264UnrefCb unref_cb, void *unref_arg);
-int parse_nal_unit_header_extension(Edge264Decoder *dec, Edge264UnrefCb unref_cb, void *unref_arg);
-int parse_nal_unit_header_extension_v2(Edge264Decoder *dec, Edge264UnrefCb unref_cb, void *unref_arg);
-int parse_nal_unit_header_extension_v3(Edge264Decoder *dec, Edge264UnrefCb unref_cb, void *unref_arg);
-int parse_nal_unit_header_extension_log(Edge264Decoder *dec, Edge264UnrefCb unref_cb, void *unref_arg);
-int parse_pic_parameter_set(Edge264Decoder *dec,  Edge264UnrefCb unref_cb, void *unref_arg);
-int parse_pic_parameter_set_v2(Edge264Decoder *dec,  Edge264UnrefCb unref_cb, void *unref_arg);
-int parse_pic_parameter_set_v3(Edge264Decoder *dec,  Edge264UnrefCb unref_cb, void *unref_arg);
-int parse_pic_parameter_set_log(Edge264Decoder *dec,  Edge264UnrefCb unref_cb, void *unref_arg);
-int parse_seq_parameter_set(Edge264Decoder *dec, Edge264UnrefCb unref_cb, void *unref_arg);
-int parse_seq_parameter_set_v2(Edge264Decoder *dec, Edge264UnrefCb unref_cb, void *unref_arg);
-int parse_seq_parameter_set_v3(Edge264Decoder *dec, Edge264UnrefCb unref_cb, void *unref_arg);
-int parse_seq_parameter_set_log(Edge264Decoder *dec, Edge264UnrefCb unref_cb, void *unref_arg);
-int parse_end_of_sequence(Edge264Decoder *dec, Edge264UnrefCb unref_cb, void *unref_arg);
-int parse_end_of_sequence_v2(Edge264Decoder *dec, Edge264UnrefCb unref_cb, void *unref_arg);
-int parse_end_of_sequence_v3(Edge264Decoder *dec, Edge264UnrefCb unref_cb, void *unref_arg);
-int parse_end_of_sequence_log(Edge264Decoder *dec, Edge264UnrefCb unref_cb, void *unref_arg);
+int ignore_NAL_log(Edge264MvcDecoder *dec, Edge264MvcUnrefCb unref_cb, void *unref_arg);
+int unsup_NAL_log(Edge264MvcDecoder *dec, Edge264MvcUnrefCb unref_cb, void *unref_arg);
+int parse_slice_layer_without_partitioning(Edge264MvcDecoder *dec, Edge264MvcUnrefCb unref_cb, void *unref_arg);
+int parse_slice_layer_without_partitioning_v2(Edge264MvcDecoder *dec, Edge264MvcUnrefCb unref_cb, void *unref_arg);
+int parse_slice_layer_without_partitioning_v3(Edge264MvcDecoder *dec, Edge264MvcUnrefCb unref_cb, void *unref_arg);
+int parse_slice_layer_without_partitioning_log(Edge264MvcDecoder *dec, Edge264MvcUnrefCb unref_cb, void *unref_arg);
+int parse_access_unit_delimiter_log(Edge264MvcDecoder *dec, Edge264MvcUnrefCb unref_cb, void *unref_arg);
+int parse_sei_log(Edge264MvcDecoder *dec, Edge264MvcUnrefCb unref_cb, void *unref_arg);
+int parse_nal_unit_header_extension(Edge264MvcDecoder *dec, Edge264MvcUnrefCb unref_cb, void *unref_arg);
+int parse_nal_unit_header_extension_v2(Edge264MvcDecoder *dec, Edge264MvcUnrefCb unref_cb, void *unref_arg);
+int parse_nal_unit_header_extension_v3(Edge264MvcDecoder *dec, Edge264MvcUnrefCb unref_cb, void *unref_arg);
+int parse_nal_unit_header_extension_log(Edge264MvcDecoder *dec, Edge264MvcUnrefCb unref_cb, void *unref_arg);
+int parse_pic_parameter_set(Edge264MvcDecoder *dec,  Edge264MvcUnrefCb unref_cb, void *unref_arg);
+int parse_pic_parameter_set_v2(Edge264MvcDecoder *dec,  Edge264MvcUnrefCb unref_cb, void *unref_arg);
+int parse_pic_parameter_set_v3(Edge264MvcDecoder *dec,  Edge264MvcUnrefCb unref_cb, void *unref_arg);
+int parse_pic_parameter_set_log(Edge264MvcDecoder *dec,  Edge264MvcUnrefCb unref_cb, void *unref_arg);
+int parse_seq_parameter_set(Edge264MvcDecoder *dec, Edge264MvcUnrefCb unref_cb, void *unref_arg);
+int parse_seq_parameter_set_v2(Edge264MvcDecoder *dec, Edge264MvcUnrefCb unref_cb, void *unref_arg);
+int parse_seq_parameter_set_v3(Edge264MvcDecoder *dec, Edge264MvcUnrefCb unref_cb, void *unref_arg);
+int parse_seq_parameter_set_log(Edge264MvcDecoder *dec, Edge264MvcUnrefCb unref_cb, void *unref_arg);
+int parse_end_of_sequence(Edge264MvcDecoder *dec, Edge264MvcUnrefCb unref_cb, void *unref_arg);
+int parse_end_of_sequence_v2(Edge264MvcDecoder *dec, Edge264MvcUnrefCb unref_cb, void *unref_arg);
+int parse_end_of_sequence_v3(Edge264MvcDecoder *dec, Edge264MvcUnrefCb unref_cb, void *unref_arg);
+int parse_end_of_sequence_log(Edge264MvcDecoder *dec, Edge264MvcUnrefCb unref_cb, void *unref_arg);
 
 #endif

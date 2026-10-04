@@ -1,4 +1,4 @@
-#include "edge264_internal.h"
+#include "edge264mvc_internal.h"
 
 #if SIMD == SSE
 	static always_inline i16x8 temporal_scale(i16x8 mvCol, int16_t DistScaleFactor) {
@@ -51,7 +51,7 @@ static always_inline i16x8 mvs_near_zero(i16x8 mvCol, i32x4 zero) {
 /**
  * Decoding of P_Skip is put in a function for reuse when recovering a P slice.
  */
-static noinline void decode_P_skip(Edge264Context *ctx) {
+static noinline void decode_P_skip(Edge264MvcContext *ctx) {
 	mb->f.inter_eqs_s = little_endian32(0x1b5fbbff);
 	mb->refPic_s[0] = ((i32x4)set8(ctx->t.RefPicList_v[0][0]))[0];
 	mb->refPic_s[1] = -1;
@@ -89,7 +89,7 @@ static noinline void decode_P_skip(Edge264Context *ctx) {
  * block sizes 16x16, 8x16 and 16x8. Each call computes a prediction from
  * neighbours, adds the mvd pair, then ends with a call to decode_inter.
  */
-static inline void decode_inter_16x16(Edge264Context *ctx, i16x8 mvd, int lx)
+static inline void decode_inter_16x16(Edge264MvcContext *ctx, i16x8 mvd, int lx)
 {
 	// compare neighbouring indices and compute mvp
 	int refIdx = mb->refIdx[lx * 4];
@@ -125,7 +125,7 @@ static inline void decode_inter_16x16(Edge264Context *ctx, i16x8 mvd, int lx)
 	decode_inter(ctx, lx * 16, 16, 16);
 }
 
-static inline void decode_inter_8x16_left(Edge264Context *ctx, i16x8 mvd, int lx)
+static inline void decode_inter_8x16_left(Edge264MvcContext *ctx, i16x8 mvd, int lx)
 {
 	// compare neighbouring indices and compute mvp
 	i16x8 mvp, mvC;
@@ -167,7 +167,7 @@ static inline void decode_inter_8x16_left(Edge264Context *ctx, i16x8 mvd, int lx
 	decode_inter(ctx, lx * 16, 8, 16);
 }
 
-static inline void decode_inter_8x16_right(Edge264Context *ctx, i16x8 mvd, int lx)
+static inline void decode_inter_8x16_right(Edge264MvcContext *ctx, i16x8 mvd, int lx)
 {
 	// compare neighbouring indices and compute mvp
 	i16x8 mvp, mvC;
@@ -208,7 +208,7 @@ static inline void decode_inter_8x16_right(Edge264Context *ctx, i16x8 mvd, int l
 	decode_inter(ctx, lx * 16 + 4, 8, 16);
 }
 
-static inline void decode_inter_16x8_top(Edge264Context *ctx, i16x8 mvd, int lx)
+static inline void decode_inter_16x8_top(Edge264MvcContext *ctx, i16x8 mvd, int lx)
 {
 	// compare neighbouring indices and compute mvp
 	i16x8 mvp, mvC;
@@ -252,7 +252,7 @@ static inline void decode_inter_16x8_top(Edge264Context *ctx, i16x8 mvd, int lx)
 	decode_inter(ctx, lx * 16, 16, 8);
 }
 
-static inline void decode_inter_16x8_bottom(Edge264Context *ctx, i16x8 mvd, int lx)
+static inline void decode_inter_16x8_bottom(Edge264MvcContext *ctx, i16x8 mvd, int lx)
 {
 	// compare neighbouring indices and compute mvp
 	i16x8 mvp;
@@ -294,7 +294,7 @@ static inline void decode_inter_16x8_bottom(Edge264Context *ctx, i16x8 mvd, int 
  * Initialise the reference indices and motion vectors of an entire macroblock
  * with direct prediction (8.4.1.2).
  */
-static always_inline void decode_direct_spatial_mv_pred(Edge264Context *ctx, unsigned direct_flags)
+static always_inline void decode_direct_spatial_mv_pred(Edge264MvcContext *ctx, unsigned direct_flags)
 {
 	// load all refIdxN and mvN in vector registers
 	i8x16 shuf = {0, 0, 0, 0, 4, 4, 4, 4, -1, -1, -1, -1, -1, -1, -1, -1};
@@ -338,7 +338,7 @@ static always_inline void decode_direct_spatial_mv_pred(Edge264Context *ctx, uns
 		i16x8 colZeroMask0 = {}, colZeroMask1 = {}, colZeroMask2 = {}, colZeroMask3 = {};
 		unsigned colZeroFlags = 0;
 		if (ctx->col_short_term) {
-			const Edge264Macroblock *mbCol = ctx->mbCol;
+			const Edge264MvcMacroblock *mbCol = ctx->mbCol;
 			i8x16 refColL0 = (i32x4){mbCol->refIdx_s[0]};
 			i8x16 offsets = refColL0 & 32;
 			i16x8 mvCol0 = *(i16x8*)(mbCol->mvs + offsets[0]);
@@ -451,10 +451,10 @@ static always_inline void decode_direct_spatial_mv_pred(Edge264Context *ctx, uns
 		decode_inter(ctx, 16, 16, 16);
 }
 
-static always_inline void decode_direct_temporal_mv_pred(Edge264Context *ctx, unsigned direct_flags)
+static always_inline void decode_direct_temporal_mv_pred(Edge264MvcContext *ctx, unsigned direct_flags)
 {
 	// load refPicCol and mvCol
-	const Edge264Macroblock *mbCol = ctx->mbCol;
+	const Edge264MvcMacroblock *mbCol = ctx->mbCol;
 	i8x16 refPicColL0 = (i32x4){mbCol->refPic_s[0]};
 	i8x16 offsets = refPicColL0 & 32;
 	i16x8 mvCol0 = *(i16x8*)(mbCol->mvs + offsets[0]);
@@ -523,7 +523,7 @@ static always_inline void decode_direct_temporal_mv_pred(Edge264Context *ctx, un
 	} while (direct_flags);
 }
 
-static noinline void decode_direct_mv_pred(Edge264Context *ctx, unsigned direct_flags) {
+static noinline void decode_direct_mv_pred(Edge264MvcContext *ctx, unsigned direct_flags) {
 	if (ctx->t.direct_spatial_mv_pred_flag) {
 		decode_direct_spatial_mv_pred(ctx, direct_flags);
 	} else {

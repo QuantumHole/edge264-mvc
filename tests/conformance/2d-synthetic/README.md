@@ -36,7 +36,7 @@ so the bug triggers. Reproduce:
     # then set SPS level_idc (RBSP byte 2) to 11
 
 Without the fix this fixture's line FAILs (wrong base hash, and nondeterministic
-under `EDGE264_THREADS`); with it, single- and multi-thread both match the
+under `EDGE264MVC_THREADS`); with it, single- and multi-thread both match the
 FFmpeg-anchored hash.
 
 ## `pps_scaling_fallback.264`

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check edge264_test liveness and deterministic damaged-frame concealment."""
+"""Check edge264mvc_test liveness and deterministic damaged-frame concealment."""
 
 import argparse
 import re
@@ -195,7 +195,7 @@ def check_corrupt_dependent_slice(exe: Path, fixture: Path, timeout: float) -> N
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--exe", default="./edge264_test", type=Path)
+    parser.add_argument("--exe", default="./edge264mvc_test", type=Path)
     parser.add_argument("--timeout", default=10.0, type=float)
     parser.add_argument(
         "--fixture",
@@ -205,7 +205,7 @@ def main() -> int:
     args = parser.parse_args()
 
     exe = args.exe.resolve()
-    with tempfile.TemporaryDirectory(prefix="edge264-test-liveness-") as directory:
+    with tempfile.TemporaryDirectory(prefix="edge264mvc-test-liveness-") as directory:
         fixture = Path(directory) / args.fixture.name
         shutil.copyfile(args.fixture.resolve(), fixture)
         frame = bytes([128]) * (16 * 16 + 2 * 8 * 8)

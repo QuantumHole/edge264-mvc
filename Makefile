@@ -1,5 +1,5 @@
 # ==============================================================================
-# edge264 — Makefile
+# edge264-mvc - Makefile
 # Generated with AI assistance by Claude Sonnet 4.6 (claude-sonnet-4-6).
 #
 # Supported targets: macOS (macos), Linux (linux), Windows MinGW (windows),
@@ -7,20 +7,20 @@
 #
 # Optional parameters (all can be overridden on the command line):
 #
-#   CC          — compiler used for object file compilation
+#   CC          - compiler used for object file compilation
 #                 (auto-detected by target OS)
-#   CCLD        — compiler driver used for the final link step (default: CC)
+#   CCLD        - compiler driver used for the final link step (default: CC)
 #                 Set this when the compiler and linker must differ, e.g. when
 #                 cross-compiling objects with Clang (--target=…) but linking
 #                 with a target-prefixed GCC (aarch64-linux-gnu-gcc) to pick up
 #                 the correct crt0.o and libgcc from the target sysroot.
-#   AR          — archiver used when STATIC=yes (default: ar; for Android NDK
+#   AR          - archiver used when STATIC=yes (default: ar; for Android NDK
 #                 cross-compilation use the NDK's llvm-ar to avoid host/target
 #                 mismatch, e.g. AR=$NDK/.../llvm-ar)
-#   OS          — target operating system (default: host OS)
+#   OS          - target operating system (default: host OS)
 #                 accepted values: macos  linux  windows  wasm  android  ios
-#   VARIANTS    — comma-separated build variants, from:
-#                   x86-64-v2  → build an extra edge264_headers object with
+#   VARIANTS    - comma-separated build variants, from:
+#                   x86-64-v2  → build an extra edge264mvc_headers object with
 #                                -march=x86-64-v2 for runtime dispatch (SSE4.1)
 #                   x86-64-v3  → same with -march=x86-64-v3 (AVX2)
 #                   logs       → build the debug/logging variant
@@ -30,23 +30,23 @@
 #                 fastest available implementation.  They are NOT needed for a
 #                 native single-machine build, where -march=native already picks
 #                 the best code path at compile time.  (default: logs)
-#   SANITIZE    — comma-separated sanitizer list passed directly to -fsanitize=,
+#   SANITIZE    - comma-separated sanitizer list passed directly to -fsanitize=,
 #                 e.g. SANITIZE=address,undefined  (default: empty)
-#   STATIC      — produce a static library (.a) instead of shared: yes|no
+#   STATIC      - produce a static library (.a) instead of shared: yes|no
 #                 (default: no; always forced to yes for iOS)
-#   PREFIX      — installation prefix (default: /usr/local)
-#   libdir      — library installation directory (default: $(PREFIX)/lib)
-#   includedir  — header installation directory (default: $(PREFIX)/include)
-#   DESTDIR     — staging root for package managers (default: empty)
-#   CPPFLAGS    — extra preprocessor flags on C source files
-#   CFLAGS      — extra compiler flags on C source files
-#   LDFLAGS     — extra linker flags passed to every link invocation
+#   PREFIX      - installation prefix (default: /usr/local)
+#   libdir      - library installation directory (default: $(PREFIX)/lib)
+#   includedir  - header installation directory (default: $(PREFIX)/include)
+#   DESTDIR     - staging root for package managers (default: empty)
+#   CPPFLAGS    - extra preprocessor flags on C source files
+#   CFLAGS      - extra compiler flags on C source files
+#   LDFLAGS     - extra linker flags passed to every link invocation
 #   OBJFLAGS    - extra flags passed when generating object files
 #   LIBFLAGS    - extra flags passed when generating library files
 #   EXEFLAGS    - extra flags passed when generating executable files
-#   BUILDTEST   — build the test executable: yes|no (default: yes)
-#   V           — verbose build output: yes|no (default: yes)
-#   PY          — Python interpreter (default: python3)
+#   BUILDTEST   - build the test executable: yes|no (default: yes)
+#   V           - verbose build output: yes|no (default: yes)
+#   PY          - Python interpreter (default: python3)
 #
 # Cross-compilation note:
 #   SSE/AVX and NEON intrinsics are enabled automatically by the compiler when
@@ -143,10 +143,10 @@ ifneq (,$(findstring $(OS),wasm android ios))
 endif
 
 # ---- Object file list --------------------------------------------------------
-OBJNAMES := edge264.o \
-  $(if $(HAS_V2),edge264_headers_v2.o) \
-  $(if $(HAS_V3),edge264_headers_v3.o) \
-  $(if $(HAS_LOGS),edge264_headers_log.o)
+OBJNAMES := edge264mvc.o \
+  $(if $(HAS_V2),edge264mvc_headers_v2.o) \
+  $(if $(HAS_V3),edge264mvc_headers_v3.o) \
+  $(if $(HAS_LOGS),edge264mvc_headers_log.o)
 
 # ---- Output filenames per target ---------------------------------------------
 ifeq ($(OS),macos)
@@ -307,7 +307,7 @@ endif
 # ==============================================================================
 
 .PHONY: all
-all: $(LIBNAME) $(if $(findstring yes,$(BUILDTEST)),edge264_test$(EXE))
+all: $(LIBNAME) $(if $(findstring yes,$(BUILDTEST)),edge264mvc_test$(EXE))
 
 # ---- Library -----------------------------------------------------------------
 # FIXME remove test here
@@ -320,21 +320,21 @@ $(LIBNAME): $(OBJNAMES)
 endif
 
 # ---- Test executable ---------------------------------------------------------
-edge264_test$(EXE): src/edge264_test.c edge264mvc.h src/edge264_internal.h $(LIBNAME)
-	$(Q)$(CCLD) src/edge264_test.c $(CPPFLAGS) $(CFLAGS) $(EXEFLAGS) -o $@
+edge264mvc_test$(EXE): src/edge264mvc_test.c edge264mvc.h src/edge264mvc_internal.h $(LIBNAME)
+	$(Q)$(CCLD) src/edge264mvc_test.c $(CPPFLAGS) $(CFLAGS) $(EXEFLAGS) -o $@
 
 # ---- Object files ------------------------------------------------------------
-edge264.o: edge264mvc.h src/*
-	$(Q)$(CC) src/edge264.c -c $(CPPFLAGS) $(CFLAGS) $(OBJFLAGS) $(RUNTIME_TESTS) -o $@
+edge264mvc.o: edge264mvc.h src/*
+	$(Q)$(CC) src/edge264mvc.c -c $(CPPFLAGS) $(CFLAGS) $(OBJFLAGS) $(RUNTIME_TESTS) -o $@
 
-edge264_headers_v2.o: edge264mvc.h src/*
-	$(Q)$(CC) src/edge264_headers.c -c $(CPPFLAGS) $(CFLAGS) $(OBJFLAGS) -march=x86-64-v2 "-DADD_VARIANT(f)=f##_v2" -o $@
+edge264mvc_headers_v2.o: edge264mvc.h src/*
+	$(Q)$(CC) src/edge264mvc_headers.c -c $(CPPFLAGS) $(CFLAGS) $(OBJFLAGS) -march=x86-64-v2 "-DADD_VARIANT(f)=f##_v2" -o $@
 
-edge264_headers_v3.o: edge264mvc.h src/*
-	$(Q)$(CC) src/edge264_headers.c -c $(CPPFLAGS) $(CFLAGS) $(OBJFLAGS) -march=x86-64-v3 "-DADD_VARIANT(f)=f##_v3" -o $@
+edge264mvc_headers_v3.o: edge264mvc.h src/*
+	$(Q)$(CC) src/edge264mvc_headers.c -c $(CPPFLAGS) $(CFLAGS) $(OBJFLAGS) -march=x86-64-v3 "-DADD_VARIANT(f)=f##_v3" -o $@
 
-edge264_headers_log.o: edge264mvc.h src/*
-	$(Q)$(CC) src/edge264_headers.c -c $(CPPFLAGS) $(CFLAGS) $(OBJFLAGS) -DLOGS "-DADD_VARIANT(f)=f##_log" -o $@
+edge264mvc_headers_log.o: edge264mvc.h src/*
+	$(Q)$(CC) src/edge264mvc_headers.c -c $(CPPFLAGS) $(CFLAGS) $(OBJFLAGS) -DLOGS "-DADD_VARIANT(f)=f##_log" -o $@
 
 
 # ==============================================================================
@@ -386,34 +386,34 @@ uninstall:
 # ==============================================================================
 .PHONY: clean clear
 clean clear:
-	$(Q)rm -f edge264_test edge264_test.exe edge264_test.js edge264_test.wasm edge264_check edge264_check.exe edge264_check.js edge264_check.wasm conformance_check conformance_check.exe liveness_check liveness_check.exe asan_check asan_check.exe fuzz_decode edge264*.o libedge264mvc.a edge264mvc.$(MAJOR).dll edge264mvc.js edge264mvc.wasm libedge264mvc.$(MAJOR).dylib libedge264mvc-universal.$(MAJOR).dylib libedge264mvc.so libedge264mvc.so.$(MAJOR)
+	$(Q)rm -f edge264mvc_test edge264mvc_test.exe edge264mvc_test.js edge264mvc_test.wasm edge264mvc_check edge264mvc_check.exe edge264mvc_check.js edge264mvc_check.wasm conformance_check conformance_check.exe liveness_check liveness_check.exe asan_check asan_check.exe fuzz_decode edge264*.o libedge264mvc.a edge264mvc.$(MAJOR).dll edge264mvc.js edge264mvc.wasm libedge264mvc.$(MAJOR).dylib libedge264mvc-universal.$(MAJOR).dylib libedge264mvc.so libedge264mvc.so.$(MAJOR)
 
 
 # ==============================================================================
 # Automated tests
 # ==============================================================================
 .PHONY: check
-check: edge264_check$(EXE)
+check: edge264mvc_check$(EXE)
 ifeq ($(OS),wasm)
 	# Older Node hides relaxed SIMD behind --experimental-wasm-relaxed-simd;
 	# newer Node enables it by default and removed the flag (passing it aborts
 	# with "bad option"). Probe once and only pass the flag when accepted.
 	$(Q)NODE="$(shell which node)"; \
 	  if "$$NODE" --experimental-wasm-relaxed-simd -e '' >/dev/null 2>&1; then \
-	    "$$NODE" --experimental-wasm-relaxed-simd edge264_check$(EXE); \
+	    "$$NODE" --experimental-wasm-relaxed-simd edge264mvc_check$(EXE); \
 	  else \
-	    "$$NODE" edge264_check$(EXE); \
+	    "$$NODE" edge264mvc_check$(EXE); \
 	  fi
 else
-	$(Q)./edge264_check$(EXE)
+	$(Q)./edge264mvc_check$(EXE)
 	$(Q)$(MAKE) --no-print-directory check-conformance
 	$(Q)$(MAKE) --no-print-directory check-stream-input
-	$(Q)$(MAKE) --no-print-directory check-edge264-test-liveness
+	$(Q)$(MAKE) --no-print-directory check-edge264mvc-test-liveness
 	$(Q)$(MAKE) --no-print-directory check-robustness
 endif
 
-edge264_check$(EXE): src/edge264_check.c edge264mvc.h src/edge264_internal.h $(LIBNAME)
-	$(Q)$(CCLD) src/edge264_check.c $(CPPFLAGS) $(CFLAGS) $(EXEFLAGS) -o $@
+edge264mvc_check$(EXE): src/edge264mvc_check.c edge264mvc.h src/edge264mvc_internal.h $(LIBNAME)
+	$(Q)$(CCLD) src/edge264mvc_check.c $(CPPFLAGS) $(CFLAGS) $(EXEFLAGS) -o $@
 
 # Committed decode-regression over the bundled JVT conformance fixtures
 # (tests/conformance/). Run by `check` on every non-wasm target; also
@@ -430,21 +430,21 @@ check-conformance: conformance_check$(EXE)
 # lines): formatting the trace must neither abort nor change the output.
 .PHONY: check-conformance-trace
 check-conformance-trace: conformance_check$(EXE)
-	$(Q)EDGE264_TRACE=1 ./conformance_check$(EXE) run tests/conformance/manifest.txt tests/conformance
+	$(Q)EDGE264MVC_TRACE=1 ./conformance_check$(EXE) run tests/conformance/manifest.txt tests/conformance
 
 # Multithreaded bit-exactness: decode the same fixtures with background worker
 # threads and assert the per-view hashes still equal the (single-thread / ITU
 # anchored) manifest. Proves the multithreaded path is bit-identical to
 # single-thread output, and a stall would fail here by timeout. Skipped on wasm
-# (single-threaded runtime). The EDGE264_THREADS=-1 pass also exercises the
+# (single-threaded runtime). The EDGE264MVC_THREADS=-1 pass also exercises the
 # auto-detect (logical-core) spawn+teardown path: it must persist its resolved
-# count so edge264_free joins every worker before freeing (a -1 left in
+# count so edge264mvc_free joins every worker before freeing (a -1 left in
 # dec->n_threads skips the join -> teardown access violation, esp. on Windows).
 .PHONY: check-conformance-mt
 check-conformance-mt: conformance_check$(EXE)
 ifneq ($(OS),wasm)
-	$(Q)EDGE264_THREADS=8 ./conformance_check$(EXE) run tests/conformance/manifest.txt tests/conformance
-	$(Q)EDGE264_THREADS=-1 ./conformance_check$(EXE) run tests/conformance/manifest.txt tests/conformance
+	$(Q)EDGE264MVC_THREADS=8 ./conformance_check$(EXE) run tests/conformance/manifest.txt tests/conformance
+	$(Q)EDGE264MVC_THREADS=-1 ./conformance_check$(EXE) run tests/conformance/manifest.txt tests/conformance
 endif
 
 conformance_check$(EXE): tests/conformance_check.c edge264mvc.h $(LIBNAME)
@@ -458,28 +458,28 @@ conformance_check$(EXE): tests/conformance_check.c edge264mvc.h $(LIBNAME)
 check-liveness: liveness_check$(EXE)
 	$(Q)./liveness_check$(EXE) run tests/liveness/manifest.txt tests/liveness
 ifneq ($(OS),wasm)
-	$(Q)EDGE264_THREADS=8 ./liveness_check$(EXE) run tests/liveness/manifest.txt tests/liveness
-	$(Q)EDGE264_THREADS=-1 ./liveness_check$(EXE) run tests/liveness/manifest.txt tests/liveness
+	$(Q)EDGE264MVC_THREADS=8 ./liveness_check$(EXE) run tests/liveness/manifest.txt tests/liveness
+	$(Q)EDGE264MVC_THREADS=-1 ./liveness_check$(EXE) run tests/liveness/manifest.txt tests/liveness
 endif
 
 liveness_check$(EXE): tests/liveness_check.c edge264mvc.h $(LIBNAME)
 	$(Q)$(CCLD) -I. tests/liveness_check.c $(CPPFLAGS) $(CFLAGS) $(EXEFLAGS) -o $@
 
-# Native edge264_test stream-input regression. Compares regular-file mmap,
+# Native edge264mvc_test stream-input regression. Compares regular-file mmap,
 # stdin (-), and FIFO/non-regular input Y4M output on small MVC fixtures. FIFO
 # input splits an Annex B start code across reads, and every subprocess has a timeout.
 .PHONY: check-stream-input
-check-stream-input: edge264_test$(EXE)
+check-stream-input: edge264mvc_test$(EXE)
 ifneq ($(OS),wasm)
-	$(Q)$(PY) tests/stream_input_check.py --exe ./edge264_test$(EXE)
+	$(Q)$(PY) tests/stream_input_check.py --exe ./edge264mvc_test$(EXE)
 endif
 
-# Exercise edge264_test's mapped and streamed progress guards on a DPB full of
+# Exercise edge264mvc_test's mapped and streamed progress guards on a DPB full of
 # unfinished pictures. A timeout turns a regressed ENOBUFS spin into a failure.
-.PHONY: check-edge264-test-liveness
-check-edge264-test-liveness: edge264_test$(EXE)
+.PHONY: check-edge264mvc-test-liveness
+check-edge264mvc-test-liveness: edge264mvc_test$(EXE)
 ifneq ($(OS),wasm)
-	$(Q)$(PY) tests/edge264_test_liveness.py --exe ./edge264_test$(EXE)
+	$(Q)$(PY) tests/edge264mvc_test_liveness.py --exe ./edge264mvc_test$(EXE)
 endif
 
 # Sanitizer regression over the crafted-SEI fixtures (tests/asan/). Build with a
@@ -497,7 +497,7 @@ endif
 .PHONY: check-robustness
 check-robustness: asan_check$(EXE)
 	$(Q)timeout 90 ./asan_check$(EXE) run tests/asan/manifest.txt tests/asan
-	$(Q)EDGE264_THREADS=4 timeout 90 ./asan_check$(EXE) run tests/asan/manifest.txt tests/asan
+	$(Q)EDGE264MVC_THREADS=4 timeout 90 ./asan_check$(EXE) run tests/asan/manifest.txt tests/asan
 
 .PHONY: check-asan
 check-asan: asan_check$(EXE)
@@ -513,7 +513,7 @@ asan_check$(EXE): tests/asan_check.c edge264mvc.h $(LIBNAME)
 .PHONY: fuzz
 fuzz: fuzz_decode$(EXE)
 fuzz_decode$(EXE): tests/fuzz_decode.c edge264mvc.h src/*
-	$(Q)clang -DNDEBUG -fsanitize=fuzzer,address,undefined -fno-sanitize-recover=undefined -O1 -g -std=gnu11 -flax-vector-conversions -Wno-override-init -pthread $(filter -march=%,$(CFLAGS)) -I. -Isrc src/edge264.c tests/fuzz_decode.c -o $@
+	$(Q)clang -DNDEBUG -fsanitize=fuzzer,address,undefined -fno-sanitize-recover=undefined -O1 -g -std=gnu11 -flax-vector-conversions -Wno-override-init -pthread $(filter -march=%,$(CFLAGS)) -I. -Isrc src/edge264mvc.c tests/fuzz_decode.c -o $@
 
 .PHONY: gentests
 gentests: $(TESTS_264)
@@ -523,13 +523,13 @@ gentests: $(TESTS_264)
 
 # ==============================================================================
 # Source archive
-# Produces edge264-$(VERSION).tar.gz from the files tracked at git HEAD.
+# Produces edge264-mvc-$(VERSION).tar.gz from the files tracked at git HEAD.
 # Requires git; aborts with a git error message if not in a repository.
 # ==============================================================================
 .PHONY: dist
 dist:
-	$(Q)git archive --format=tar.gz --prefix=edge264-$(VERSION)/ \
-	    -o edge264-$(VERSION).tar.gz HEAD
+	$(Q)git archive --format=tar.gz --prefix=edge264-mvc-$(VERSION)/ \
+	    -o edge264-mvc-$(VERSION).tar.gz HEAD
 
 
 # ==============================================================================
@@ -545,9 +545,9 @@ help:
 	@echo "  install     Install library, header and pkg-config file"
 	@echo "  uninstall   Remove installed files"
 	@echo "  clean       Remove build artifacts"
-	@echo "  check       Run automated tests (edge264_check)"
+	@echo "  check       Run automated tests (edge264mvc_check)"
 	@echo "  gentests    Generate .264 test bitstreams from .yaml files"
-	@echo "  dist        Create edge264-$(VERSION).tar.gz from git HEAD"
+	@echo "  dist        Create edge264-mvc-$(VERSION).tar.gz from git HEAD"
 	@echo "  help        Show this help"
 	@echo ""
 	@echo "Current parameters:"

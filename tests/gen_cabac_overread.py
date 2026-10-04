@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # Synthesize a CABAC stream that reproduces the end-of-slice over-read deadlock
-# fixed in edge264_headers.c (worker_loop): a CABAC slice that decodes every
+# fixed in edge264mvc_headers.c (worker_loop): a CABAC slice that decodes every
 # macroblock of the picture but leaves a non-clean cabac trailing state
 # (msb_cache != 0, from the arithmetic engine's look-ahead past the slice's last
 # byte). Before the fix that tripped EBADMSG on a *complete* final slice, so

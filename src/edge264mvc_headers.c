@@ -1,18 +1,18 @@
-#include "edge264_internal.h"
+#include "edge264mvc_internal.h"
 
-#include "edge264_bitstream.c"
-#include "edge264_deblock.c"
-#include "edge264_inter.c"
-#include "edge264_intra.c"
-#include "edge264_mvpred.c"
-#include "edge264_residual.c"
+#include "edge264mvc_bitstream.c"
+#include "edge264mvc_deblock.c"
+#include "edge264mvc_inter.c"
+#include "edge264mvc_intra.c"
+#include "edge264mvc_mvpred.c"
+#include "edge264mvc_residual.c"
 #ifdef LOGS
-	#include "edge264_sei.c"
+	#include "edge264mvc_sei.c"
 #endif
 #define CABAC 0
-#include "edge264_slice.c"
+#include "edge264mvc_slice.c"
 #define CABAC 1
-#include "edge264_slice.c"
+#include "edge264mvc_slice.c"
 
 
 
@@ -58,7 +58,7 @@ static const i8x16 Default_8x8_Inter[4] = {
  * POCs should differ anyway. BottomFieldOrderCnt is ignored too because the
  * test on TopFieldOrderCnt is sufficient.
  */
-static void unset_currPic(Edge264Decoder *dec) {
+static void unset_currPic(Edge264MvcDecoder *dec) {
 	assert(dec->currPic >= 0);
 	int non_base_view = dec->non_base_frames >> dec->currPic & 1;
 	if ((dec->short_term_frames | dec->long_term_frames) & 1u << dec->currPic) {
@@ -82,13 +82,13 @@ static void unset_currPic(Edge264Decoder *dec) {
  * entries before the first empty one, so a gap left in the middle let later
  * bumps push a queued picture out of the queue, where get_frame never sees it.
  */
-static void dequeue_frame(Edge264Decoder *dec, int view, int i) {
+static void dequeue_frame(Edge264MvcDecoder *dec, int view, int i) {
 	for (; i < 15; i++)
 		dec->get_frame_queue[view][i] = dec->get_frame_queue[view][i + 1];
 	dec->get_frame_queue[view][15] = -1;
 }
 
-static int bump_frame(Edge264Decoder *dec, int non_base_view, unsigned ignored) {
+static int bump_frame(Edge264MvcDecoder *dec, int non_base_view, unsigned ignored) {
 	int pic = -1;
 	int lowest_poc = INT_MAX;
 	unsigned same_views = non_base_view ? dec->non_base_frames : ~dec->non_base_frames;
@@ -133,10 +133,10 @@ static int bump_frame(Edge264Decoder *dec, int non_base_view, unsigned ignored) 
 	return 1;
 }
 
-static int conceal_frame(Edge264Decoder *dec, int id);
-static void progress_or_wait(Edge264Decoder *dec);
+static int conceal_frame(Edge264MvcDecoder *dec, int id);
+static void progress_or_wait(Edge264MvcDecoder *dec);
 
-static int bump_all_frames(Edge264Decoder *dec) {
+static int bump_all_frames(Edge264MvcDecoder *dec) {
 	if (dec->currPic >= 0)
 		unset_currPic(dec);
 	while (bump_frame(dec, 0, 0) | bump_frame(dec, 1, 0));
@@ -203,7 +203,7 @@ static int bump_all_frames(Edge264Decoder *dec) {
  * single-thread and multithreaded runs bump and emit in the same order, and
  * the consumer-side valve never fires on a well-formed stream.
  */
-static void catch_up_dependent_bumps(Edge264Decoder *dec) {
+static void catch_up_dependent_bumps(Edge264MvcDecoder *dec) {
 	if (dec->ssps.BitDepth_Y == 0)
 		return;
 	unsigned done = 0;
@@ -237,14 +237,14 @@ static void catch_up_dependent_bumps(Edge264Decoder *dec) {
 	}
 }
 
-static void flush_frames(Edge264Decoder *dec) {
+static void flush_frames(Edge264MvcDecoder *dec) {
 	// FIXME interrupt all threads then wait until they are back to wait
 	assert(!(dec->n_threads == 0 && dec->busy_tasks));
 	while (dec->busy_tasks)
 		progress_or_wait(dec);
 }
 
-static int alloc_frame(Edge264Decoder *dec, int id, int errno_on_fail) {
+static int alloc_frame(Edge264MvcDecoder *dec, int id, int errno_on_fail) {
 	int mbs = (dec->sps.pic_width_in_mbs + 1) * dec->sps.pic_height_in_mbs - 1;
 	// The neighbours of the top row (B, C, D, up to pic_width_in_mbs + 2
 	// macroblocks back) are read before their availability masks them out, so
@@ -253,9 +253,9 @@ static int alloc_frame(Edge264Decoder *dec, int id, int errno_on_fail) {
 	// the slices decoding the bottom of the picture write meanwhile.
 	int guard = dec->sps.pic_width_in_mbs + 2;
 	unsigned samples_size = (dec->plane_size_Y + dec->plane_size_C + 16 + 63) & -64; // plus margin for overreads, and cache line alignment of mbs
-	unsigned mbs_size = sizeof(Edge264Macroblock) * (guard + mbs);
+	unsigned mbs_size = sizeof(Edge264MvcMacroblock) * (guard + mbs);
 	dec->alloc_cb((void **)&dec->samples_buffers[id], samples_size, (void **)&dec->mb_buffers[id], mbs_size, errno_on_fail, dec->alloc_arg);
-	Edge264Macroblock *m = dec->mb_buffers[id];
+	Edge264MvcMacroblock *m = dec->mb_buffers[id];
 	if (dec->samples_buffers[id] && m) {
 		for (int i = 0; i < guard; i++)
 			m[i] = unavail_mb;
@@ -275,14 +275,14 @@ static int alloc_frame(Edge264Decoder *dec, int id, int errno_on_fail) {
 	}
 }
 
-static void clear_decoder(Edge264Decoder *dec) {
-	memset((void *)dec + offsetof(Edge264Decoder, nal_ref_idc), 0, offsetof(Edge264Decoder, log_base_us) - offsetof(Edge264Decoder, nal_ref_idc));
+static void clear_decoder(Edge264MvcDecoder *dec) {
+	memset((void *)dec + offsetof(Edge264MvcDecoder, nal_ref_idc), 0, offsetof(Edge264MvcDecoder, log_base_us) - offsetof(Edge264MvcDecoder, nal_ref_idc));
 	dec->currPic = dec->basePic = -1;
 	dec->PrevRefFrameNum[0] = dec->PrevRefFrameNum[1] = -1;
 	dec->taskPics_v = dec->get_frame_queue_v[0] = dec->get_frame_queue_v[1] = set8(-1);
 }
 
-int ADD_VARIANT(parse_end_of_sequence)(Edge264Decoder *dec, Edge264UnrefCb unref_cb, void *unref_arg) {
+int ADD_VARIANT(parse_end_of_sequence)(Edge264MvcDecoder *dec, Edge264MvcUnrefCb unref_cb, void *unref_arg) {
 	int ret = EBADMSG;
 	if (rbsp_end(&dec->gb, 0)) {
 		// end_of_seq empties the DPB (Annex C.4.5.3): every picture of the finished
@@ -306,10 +306,10 @@ int ADD_VARIANT(parse_end_of_sequence)(Edge264Decoder *dec, Edge264UnrefCb unref
 }
 
 #ifdef LOGS
-	int ignore_NAL_log(Edge264Decoder *dec, Edge264UnrefCb unref_cb, void *unref_arg) {
+	int ignore_NAL_log(Edge264MvcDecoder *dec, Edge264MvcUnrefCb unref_cb, void *unref_arg) {
 		return print_dec(dec, "  decode_NAL_result: %s\n", 0);
 	}
-	int unsup_NAL_log(Edge264Decoder *dec, Edge264UnrefCb unref_cb, void *unref_arg) {
+	int unsup_NAL_log(Edge264MvcDecoder *dec, Edge264MvcUnrefCb unref_cb, void *unref_arg) {
 		return print_dec(dec, "  decode_NAL_result: %s\n", ENOTSUP);
 	}
 #endif
@@ -320,7 +320,7 @@ int ADD_VARIANT(parse_end_of_sequence)(Edge264Decoder *dec, Edge264UnrefCb unref
  * This function sets the context pointers to the frame about to be decoded,
  * and fills the context caches with useful values.
  */
-static void initialize_context(Edge264Context *ctx, int currPic)
+static void initialize_context(Edge264MvcContext *ctx, int currPic)
 {
 	static const int8_t QP_Y2C[88] = {
 		0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
@@ -448,7 +448,7 @@ static unsigned ppow(unsigned p65536, unsigned k) {
  * 
  * FIXME remove ldleft macros eventually
 */
-static void recover_slice(Edge264Context *ctx, int currPic, int keep_mb) {
+static void recover_slice(Edge264MvcContext *ctx, int currPic, int keep_mb) {
 	__atomic_fetch_or(&ctx->d->frame_flags[currPic], EDGE264MVC_VIEW_CONCEALED, __ATOMIC_RELAXED);
 	// mark all previous mbs as erroneous and assign them an error probability
 	ctx->mby = (unsigned)ctx->t.first_mb_in_slice / (unsigned)ctx->t.pic_width_in_mbs;
@@ -598,7 +598,7 @@ static void recover_slice(Edge264Context *ctx, int currPic, int keep_mb) {
  * It sets up recover_slice to go through all mbs and recover them while
  * setting their error probability to 100%.
  */
-/*static void recover_frame(Edge264Decoder *dec) {
+/*static void recover_frame(Edge264MvcDecoder *dec) {
 	
 }*/
 
@@ -607,7 +607,7 @@ static void recover_slice(Edge264Context *ctx, int currPic, int keep_mb) {
 /**
  * Deblock the macroblocks [from, to) of frame currPic in raster order.
  */
-static void deblock_range(Edge264Context *c, int currPic, int from, int to) {
+static void deblock_range(Edge264MvcContext *c, int currPic, int from, int to) {
 	if ((unsigned)from >= (unsigned)to)
 		return;
 	c->mby = (unsigned)from / (unsigned)c->t.pic_width_in_mbs;
@@ -615,7 +615,7 @@ static void deblock_range(Edge264Context *c, int currPic, int from, int to) {
 	c->samples_mb[0] = c->t.samples_buffers[currPic] + (c->mbx + c->mby * c->t.stride[0]) * 16;
 	c->samples_mb[1] = c->t.samples_buffers[currPic] + (c->mbx + c->mby * c->t.stride[1]) * 8 + c->t.plane_size_Y;
 	c->samples_mb[2] = c->samples_mb[1] + (c->t.stride[1] >> 1);
-	c->_mb = (Edge264Macroblock *)c->t.mb_buffer + c->mbx + c->mby * (c->t.pic_width_in_mbs + 1);
+	c->_mb = (Edge264MvcMacroblock *)c->t.mb_buffer + c->mbx + c->mby * (c->t.pic_width_in_mbs + 1);
 	for (int addr = from; addr < to; addr++) {
 		deblock_mb(c);
 		c->_mb++;
@@ -648,8 +648,8 @@ static void deblock_range(Edge264Context *c, int currPic, int from, int to) {
  * recovers its unpublished macroblocks only after deblocking the others.
  */
 enum { SLICE_ABANDONED, SLICE_TURN, SLICE_DEFERRED };
-static int slice_turn(Edge264Context *c, int currPic, int keep_mb, int ret) {
-	Edge264Decoder *dec = c->d;
+static int slice_turn(Edge264MvcContext *c, int currPic, int keep_mb, int ret) {
+	Edge264MvcDecoder *dec = c->d;
 	int32_t first = c->t.first_mb_in_slice;
 	int32_t cur = __atomic_load_n(&dec->next_deblock_addr[currPic], __ATOMIC_ACQUIRE);
 	if (cur < first && c->thread_id >= 0) {
@@ -667,7 +667,7 @@ static int slice_turn(Edge264Context *c, int currPic, int keep_mb, int ret) {
 				break;
 			if (ret == 0 && ~dec->deblock_pending_slices) {
 				int i = __builtin_ctzll(~dec->deblock_pending_slices);
-				dec->deblock_pending[i] = (Edge264PendingSlice){
+				dec->deblock_pending[i] = (Edge264MvcPendingSlice){
 					.pic = currPic,
 					.deblock = c->t.disable_deblocking_filter_idc == 0,
 					.entropy_coding_mode_flag = c->t.pps.entropy_coding_mode_flag,
@@ -691,8 +691,8 @@ static int slice_turn(Edge264Context *c, int currPic, int keep_mb, int ret) {
  * After publishing a slice up to frontier, deblock and publish in order the
  * following slices of the frame that finished decoding meanwhile.
  */
-static void process_pending_slices(Edge264Context *c, int currPic, int32_t frontier) {
-	Edge264Decoder *dec = c->d;
+static void process_pending_slices(Edge264MvcContext *c, int currPic, int32_t frontier) {
+	Edge264MvcDecoder *dec = c->d;
 	if (c->thread_id < 0)
 		return;
 	for (;;) {
@@ -707,7 +707,7 @@ static void process_pending_slices(Edge264Context *c, int currPic, int32_t front
 			pthread_mutex_unlock(&dec->lock);
 			return;
 		}
-		Edge264PendingSlice s = dec->deblock_pending[slot];
+		Edge264MvcPendingSlice s = dec->deblock_pending[slot];
 		dec->deblock_pending_slices &= ~((uint64_t)1 << slot);
 		pthread_mutex_unlock(&dec->lock);
 		if (s.deblock) {
@@ -728,7 +728,7 @@ static void process_pending_slices(Edge264Context *c, int currPic, int32_t front
  * tasks continuously until stopped by the parent process.
  */
 void *ADD_VARIANT(worker_loop)(void *arg) {
-	Edge264Context c;
+	Edge264MvcContext c;
 	c.d = (void *)((uintptr_t)arg & -16);
 	c.thread_id = c.d->n_threads ? (uintptr_t)arg & 15 : -1;
 	c.log_base_us = c.d->log_base_us;
@@ -777,11 +777,11 @@ void *ADD_VARIANT(worker_loop)(void *arg) {
 		size_t ret = 0;
 		if (c.d->mbc_ring_sizes[slot] < c.t.pic_width_in_mbs + 2) {
 			free(c.d->mbc_ring_allocs[slot]);
-			c.d->mbc_ring_allocs[slot] = malloc((c.t.pic_width_in_mbs + 4) * sizeof(Edge264MbCache) + 63);
+			c.d->mbc_ring_allocs[slot] = malloc((c.t.pic_width_in_mbs + 4) * sizeof(Edge264MvcMbCache) + 63);
 			c.d->mbc_ring_sizes[slot] = c.d->mbc_ring_allocs[slot] ? c.t.pic_width_in_mbs + 2 : 0;
 		}
 		if (c.d->mbc_ring_allocs[slot])
-			c.mbc_ring = (Edge264MbCache *)(((uintptr_t)c.d->mbc_ring_allocs[slot] + 63) & -64) + 1;
+			c.mbc_ring = (Edge264MvcMbCache *)(((uintptr_t)c.d->mbc_ring_allocs[slot] + 63) & -64) + 1;
 		initialize_context(&c, currPic);
 		
 		// call the function containing the macroblock decoding loop
@@ -907,7 +907,7 @@ void *ADD_VARIANT(worker_loop)(void *arg) {
  * Updates the reference flags by adaptive memory control or sliding window
  * marking process (8.2.5).
  */
-static void parse_dec_ref_pic_marking(Edge264Decoder *dec, Edge264SeqParameterSet *sps)
+static void parse_dec_ref_pic_marking(Edge264MvcDecoder *dec, Edge264MvcSeqParameterSet *sps)
 {
 	// no_output_of_prior_pics_flag is easier to support than to signal unsupported
 	if (dec->IdrPicFlag) {
@@ -1017,7 +1017,7 @@ static void parse_dec_ref_pic_marking(Edge264Decoder *dec, Edge264SeqParameterSe
 /**
  * Parses coefficients for weighted sample prediction (7.4.3.2 and 8.4.2.3).
  */
-static void parse_pred_weight_table(Edge264Decoder *dec, Edge264SeqParameterSet *sps, Edge264Task *t)
+static void parse_pred_weight_table(Edge264MvcDecoder *dec, Edge264MvcSeqParameterSet *sps, Edge264MvcTask *t)
 {
 	// further tests will depend only on weighted_bipred_idc
 	if (t->slice_type == 0)
@@ -1067,7 +1067,7 @@ static void parse_pred_weight_table(Edge264Decoder *dec, Edge264SeqParameterSet 
  * single function to foster compactness and maintenance. Performance is not
  * crucial here.
  */
-static int parse_ref_pic_list_modification(Edge264Decoder *dec, Edge264SeqParameterSet *sps, Edge264Task *t)
+static int parse_ref_pic_list_modification(Edge264MvcDecoder *dec, Edge264MvcSeqParameterSet *sps, Edge264MvcTask *t)
 {
 	// initial sort on FrameNum for P, on PicOrderCnt for B
 	int count[3] = {0, 0, 0}; // number of refs before/after/long
@@ -1249,7 +1249,7 @@ static int parse_ref_pic_list_modification(Edge264Decoder *dec, Edge264SeqParame
 /**
  * This fonction copies the last set of fields to finish initializing the task.
  */
-static void initialize_task(Edge264Decoder *dec, Edge264SeqParameterSet *sps, Edge264Task *t)
+static void initialize_task(Edge264MvcDecoder *dec, Edge264MvcSeqParameterSet *sps, Edge264MvcTask *t)
 {
 	// copy most essential fields from dec
 	memcpy(&t->gb, &dec->gb, sizeof(dec->gb)); // GCC-14 crashes on dec->out = format
@@ -1299,12 +1299,12 @@ static void initialize_task(Edge264Decoder *dec, Edge264SeqParameterSet *sps, Ed
 	t->plane_size_Y = dec->plane_size_Y;
 	t->plane_size_C = dec->plane_size_C;
 	t->prev_long_term_frames = dec->prev_long_term_frames & ~dec->prev_short_term_frames; // mask of only long-term frames
-	t->mb_buffer = (Edge264Macroblock *)dec->mb_buffers[dec->currPic];
+	t->mb_buffer = (Edge264MvcMacroblock *)dec->mb_buffers[dec->currPic];
 	memcpy(t->samples_buffers, dec->samples_buffers, sizeof(t->samples_buffers));
 	t->samples_clip_v[0] = set16((1 << sps->BitDepth_Y) - 1);
 	t->samples_clip_v[1] = t->samples_clip_v[2] = set16((1 << sps->BitDepth_C) - 1);
 	if (t->slice_type == 1) { // B slices
-		t->mbCol_buffer = (Edge264Macroblock *)dec->mb_buffers[t->RefPicList[1][0]];
+		t->mbCol_buffer = (Edge264MvcMacroblock *)dec->mb_buffers[t->RefPicList[1][0]];
 		if (t->pps.weighted_bipred_idc == 2 || !t->direct_spatial_mv_pred_flag) {
 			u32x4 poc = set32(minw(dec->TopFieldOrderCnt, dec->BottomFieldOrderCnt));
 			t->diff_poc_v[0] = packs32(poc - minw32(dec->FieldOrderCnt_v[0][0], dec->FieldOrderCnt_v[1][0]),
@@ -1331,7 +1331,7 @@ static void initialize_task(Edge264Decoder *dec, Edge264SeqParameterSet *sps, Ed
 // race these writes. The release store publishes the concealed buffers to
 // dependent tasks. Returns 0 if the picture must be concealed later, once the
 // base view it is concealed from is complete.
-static int conceal_frame(Edge264Decoder *dec, int id) {
+static int conceal_frame(Edge264MvcDecoder *dec, int id) {
 	assert(dec->samples_buffers[id] && dec->mb_buffers[id]);
 	__atomic_fetch_or(&dec->frame_flags[id], EDGE264MVC_VIEW_CONCEALED, __ATOMIC_RELAXED);
 	// A damaged MVC dependent view is best concealed by the base view of its
@@ -1383,7 +1383,7 @@ static int conceal_frame(Edge264Decoder *dec, int id) {
 	uint8_t *dst = dec->samples_buffers[id];
 	const uint8_t *src = base >= 0 ? dec->samples_buffers[base] : NULL;
 	int8_t recovery_bits = ((dec->frame_flip_bits >> id) & 1) + 2;
-	Edge264Macroblock *m = dec->mb_buffers[id];
+	Edge264MvcMacroblock *m = dec->mb_buffers[id];
 	for (int addr = from; addr < total_mbs; addr++) {
 		int x = addr % width;
 		int y = addr / width;
@@ -1429,7 +1429,7 @@ static int conceal_frame(Edge264Decoder *dec, int id) {
 // otherwise wait on such a frame, since a running task may already wait on the
 // progress of a pending task that depends on it. Conformant streams never enter
 // this path: an incomplete dependency retains a writer until it reaches INT_MAX.
-static int release_terminal_task_dependencies(Edge264Decoder *dec) {
+static int release_terminal_task_dependencies(Edge264MvcDecoder *dec) {
 	if (!dec->n_threads && (dec->ready_tasks || dec->pending_tasks != dec->busy_tasks))
 		return 0;
 	// Pictures awaiting output are concealed as soon as they are terminal too, so
@@ -1452,7 +1452,7 @@ static int release_terminal_task_dependencies(Edge264Decoder *dec) {
 // All task_complete waits assume that some worker can eventually signal. Check
 // for the quiescent abandoned-reference state first; if concealment made a task
 // runnable, let the caller re-evaluate its wait predicate without sleeping.
-static void progress_or_wait(Edge264Decoder *dec) {
+static void progress_or_wait(Edge264MvcDecoder *dec) {
 	if (release_terminal_task_dependencies(dec) && dec->ready_tasks)
 		return;
 	pthread_cond_wait(&dec->task_complete, &dec->lock);
@@ -1469,7 +1469,7 @@ static void progress_or_wait(Edge264Decoder *dec) {
  * out of that round either, nothing but a valve can make progress. The tasks
  * are finished at both rounds, so the outcome does not depend on the threads.
  */
-static int output_stalled(Edge264Decoder *dec) {
+static int output_stalled(Edge264MvcDecoder *dec) {
 	if (dec->output_frames & ~dec->to_get_frames) {
 		dec->undelivered = 0;
 		return 0;
@@ -1497,7 +1497,7 @@ static int output_stalled(Edge264Decoder *dec) {
  * first keeps the outcome independent of the thread timing. Returns 1 if the
  * caller can now receive frames.
  */
-static int make_room(Edge264Decoder *dec, int non_base_view) {
+static int make_room(Edge264MvcDecoder *dec, int non_base_view) {
 	if (bump_all_frames(dec)) {
 		dec->flushing = 1; // cleared by the next NAL
 		return 1;
@@ -1530,7 +1530,7 @@ static int make_room(Edge264Decoder *dec, int non_base_view) {
  * This function matches slice_header() in 7.3.3, which it parses while updating
  * the DPB and initialising slice data for further decoding.
  */
-int ADD_VARIANT(parse_slice_layer_without_partitioning)(Edge264Decoder *dec, Edge264UnrefCb unref_cb, void *unref_arg)
+int ADD_VARIANT(parse_slice_layer_without_partitioning)(Edge264MvcDecoder *dec, Edge264MvcUnrefCb unref_cb, void *unref_arg)
 {
 	static const char * const slice_type_names[5] = {"P", "B", "I", "SP", "SI"};
 	static const char * const disable_deblocking_filter_idc_names[3] = {"enabled", "disabled", "sliced"};
@@ -1540,7 +1540,7 @@ int ADD_VARIANT(parse_slice_layer_without_partitioning)(Edge264Decoder *dec, Edg
 	unsigned avail_tasks;
 	while (!(avail_tasks = 0xffff & ~dec->busy_tasks))
 		progress_or_wait(dec);
-	Edge264Task *t = dec->tasks + __builtin_ctz(avail_tasks);
+	Edge264MvcTask *t = dec->tasks + __builtin_ctz(avail_tasks);
 	t->unref_cb = unref_cb;
 	t->unref_arg = unref_arg;
 	t->RefPicList_v[0] = t->RefPicList_v[1] = t->RefPicList_v[2] = t->RefPicList_v[3] =
@@ -1549,7 +1549,7 @@ int ADD_VARIANT(parse_slice_layer_without_partitioning)(Edge264Decoder *dec, Edg
 	// check on view_id
 	int non_base_view = 1;
 	unsigned same_views = dec->non_base_frames;
-	Edge264SeqParameterSet *sps = &dec->ssps;
+	Edge264MvcSeqParameterSet *sps = &dec->ssps;
 	if (dec->nal_unit_type != 20) {
 		non_base_view = 0;
 		same_views = ~same_views;
@@ -2080,7 +2080,7 @@ int ADD_VARIANT(parse_slice_layer_without_partitioning)(Edge264Decoder *dec, Edg
  * are included or not, hence a present AUD cannot cover an otherwise bug.
  */
 #ifdef LOGS
-	int parse_access_unit_delimiter_log(Edge264Decoder *dec, Edge264UnrefCb unref_cb, void *unref_arg) {
+	int parse_access_unit_delimiter_log(Edge264MvcDecoder *dec, Edge264MvcUnrefCb unref_cb, void *unref_arg) {
 		const char *primary_pic_type_names[8] =
 			{"I", "I,P", "I,P,B", "SI", "SI,SP", "I,SI", "I,SI,P,SP", "I,SI,P,SP,B"};
 		int primary_pic_type = get_uv(&dec->gb, 3);
@@ -2092,7 +2092,7 @@ int ADD_VARIANT(parse_slice_layer_without_partitioning)(Edge264Decoder *dec, Edg
 
 
 
-int ADD_VARIANT(parse_nal_unit_header_extension)(Edge264Decoder *dec, Edge264UnrefCb unref_cb, void *unref_arg) {
+int ADD_VARIANT(parse_nal_unit_header_extension)(Edge264MvcDecoder *dec, Edge264MvcUnrefCb unref_cb, void *unref_arg) {
 	unsigned u = get_uv(&dec->gb, 24);
 	log_dec(dec, "  svc_extension_flag: %u%s\n", u >> 23, unsup_if(u >> 23));
 	int ret = ENOTSUP;
@@ -2126,7 +2126,7 @@ int ADD_VARIANT(parse_nal_unit_header_extension)(Edge264Decoder *dec, Edge264Unr
  * existing list, so they must be initialised with Default scaling lists at
  * the very first call.
  */
-static void parse_scaling_lists(Edge264Decoder *dec, i8x16 *w4x4, i8x16 *w8x8, int transform_8x8_mode_flag, int chroma_format_idc)
+static void parse_scaling_lists(Edge264MvcDecoder *dec, i8x16 *w4x4, i8x16 *w8x8, int transform_8x8_mode_flag, int chroma_format_idc)
 {
 	i8x16 fb4x4 = *w4x4; // fall-back
 	i8x16 d4x4 = Default_4x4_Intra; // for useDefaultScalingMatrixFlag
@@ -2204,12 +2204,12 @@ static void parse_scaling_lists(Edge264Decoder *dec, i8x16 *w4x4, i8x16 *w8x8, i
  * Parses the PPS into a copy of the current SPS, then saves it into one of four
  * PPS slots if a rbsp_trailing_bits pattern follows.
  */
-int ADD_VARIANT(parse_pic_parameter_set)(Edge264Decoder *dec,  Edge264UnrefCb unref_cb, void *unref_arg)
+int ADD_VARIANT(parse_pic_parameter_set)(Edge264MvcDecoder *dec,  Edge264MvcUnrefCb unref_cb, void *unref_arg)
 {
 	static const char * const weighted_pred_names[3] = {"average", "explicit", "implicit"};
 	
 	// temp storage, committed if entire NAL is correct
-	Edge264PicParameterSet pps = {
+	Edge264MvcPicParameterSet pps = {
 		.transform_8x8_mode_flag = 0,
 		.weightScale4x4_v = {},
 		.weightScale8x8_v = {},
@@ -2302,7 +2302,7 @@ int ADD_VARIANT(parse_pic_parameter_set)(Edge264Decoder *dec,  Edge264UnrefCb un
  * For the sake of implementation simplicity, the responsibility for timing
  * management is left to demuxing libraries, hence any HRD data is ignored.
  */
-static void parse_hrd_parameters(Edge264Decoder *dec, Edge264SeqParameterSet *sps, int8_t *cpb_cnt, const char *indent) {
+static void parse_hrd_parameters(Edge264MvcDecoder *dec, Edge264MvcSeqParameterSet *sps, int8_t *cpb_cnt, const char *indent) {
 	*cpb_cnt = get_ue16(&dec->gb, 31) + 1;
 	int bit_rate_scale = get_uv(&dec->gb, 4);
 	int cpb_size_scale = get_uv(&dec->gb, 4);
@@ -2335,7 +2335,7 @@ static void parse_hrd_parameters(Edge264Decoder *dec, Edge264SeqParameterSet *sp
  * To avoid cluttering the memory layout with unused data, VUI parameters are
  * mostly ignored until explicitly asked in the future.
  */
-static void parse_vui_parameters(Edge264Decoder *dec, Edge264SeqParameterSet *sps)
+static void parse_vui_parameters(Edge264MvcDecoder *dec, Edge264MvcSeqParameterSet *sps)
 {
 	static const unsigned ratio2sar[32] = {0, 0x00010001, 0x000c000b,
 		0x000a000b, 0x0010000b, 0x00280021, 0x0018000b, 0x0014000b, 0x0020000b,
@@ -2491,7 +2491,7 @@ static void parse_vui_parameters(Edge264Decoder *dec, Edge264SeqParameterSet *sp
  * Parses the MVC VUI parameters extension, only advancing the stream pointer
  * for error detection, and ignoring it until requested in the future.
  */
-static void parse_mvc_vui_parameters_extension(Edge264Decoder *dec, Edge264SeqParameterSet *sps)
+static void parse_mvc_vui_parameters_extension(Edge264MvcDecoder *dec, Edge264MvcSeqParameterSet *sps)
 {
 	log_dec(dec, "  vui_mvc_operation_points:\n");
 	for (int i = get_ue16(&dec->gb, 1023); i-- >= 0;) {
@@ -2535,7 +2535,7 @@ static void parse_mvc_vui_parameters_extension(Edge264Decoder *dec, Edge264SeqPa
 /**
  * Parses (and mostly ignores) the SPS extension for MVC.
  */
-static int parse_seq_parameter_set_mvc_extension(Edge264Decoder *dec, int profile_idc)
+static int parse_seq_parameter_set_mvc_extension(Edge264MvcDecoder *dec, int profile_idc)
 {
 	// returning unsupported asap is more efficient than keeping tedious code afterwards
 	int num_views = get_ue16(&dec->gb, 1023) + 1;
@@ -2588,10 +2588,10 @@ static int parse_seq_parameter_set_mvc_extension(Edge264Decoder *dec, int profil
 
 
 /**
- * Parses the SPS into a edge264_parameter_set structure, then saves it if a
+ * Parses the SPS into a edge264mvc_parameter_set structure, then saves it if a
  * rbsp_trailing_bits pattern follows.
  */
-int ADD_VARIANT(parse_seq_parameter_set)(Edge264Decoder *dec, Edge264UnrefCb unref_cb, void *unref_arg)
+int ADD_VARIANT(parse_seq_parameter_set)(Edge264MvcDecoder *dec, Edge264MvcUnrefCb unref_cb, void *unref_arg)
 {
 	static const char * const profile_idc_names[256] = {
 		[0 ... 255] = "Unknown",
@@ -2630,7 +2630,7 @@ int ADD_VARIANT(parse_seq_parameter_set)(Edge264Decoder *dec, Edge264UnrefCb unr
 	};
 	
 	// temp storage, committed if entire NAL is correct
-	Edge264SeqParameterSet sps = {
+	Edge264MvcSeqParameterSet sps = {
 		.chroma_format_idc = 1,
 		.ChromaArrayType = 1,
 		.BitDepth_Y = 8,
@@ -2882,7 +2882,7 @@ int ADD_VARIANT(parse_seq_parameter_set)(Edge264Decoder *dec, Edge264UnrefCb unr
 	if (ret == 0) {
 		
 		// compute the resulting frame format
-		Edge264Frame format = {};
+		Edge264MvcOutput format = {};
 		int width = sps.pic_width_in_mbs << 4;
 		int height = sps.pic_height_in_mbs << 4;
 		format.bit_depth_Y = sps.BitDepth_Y;
@@ -2892,7 +2892,7 @@ int ADD_VARIANT(parse_seq_parameter_set)(Edge264Decoder *dec, Edge264UnrefCb unr
 		// reason: mb_errors is not yet exported (always NULL), so this stride is
 		// currently unused. It truncates in int16_t at >=108 mbs wide (304 B/mb);
 		// widen stride_mb (an ABI change) together with populating mb_errors.
-		format.stride_mb = sps.pic_width_in_mbs * sizeof(Edge264Macroblock);
+		format.stride_mb = sps.pic_width_in_mbs * sizeof(Edge264MvcMacroblock);
 		if (!(format.stride_Y & 2047)) // add an offset to stride if it is a multiple of 2048
 			format.stride_Y += (sps.BitDepth_Y == 8) ? 16 : 32;
 		memcpy(format.frame_crop_offsets, &sps.frame_crop_offsets_l, 8);
@@ -2906,7 +2906,7 @@ int ADD_VARIANT(parse_seq_parameter_set)(Edge264Decoder *dec, Edge264UnrefCb unr
 		}
 		
 		// bump all frames and clear the decoder if the frame format changes
-		if (memcmp(&format, &dec->out, sizeof(Edge264Frame))) {
+		if (memcmp(&format, &dec->out, sizeof(Edge264MvcOutput))) {
 			// The previous sequence ends here like at an end_of_seq: every picture
 			// must be output, so let get_frame emit an MVC base whose dependent view
 			// never comes (otherwise it holds the base, and this NAL returned ENOBUFS
