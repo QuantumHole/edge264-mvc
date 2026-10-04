@@ -904,8 +904,8 @@ static void parse_dec_ref_pic_marking(Edge264Decoder *dec, Edge264SeqParameterSe
 	if (dec->IdrPicFlag) {
 		int no_output_of_prior_pics_flag = get_u1(&dec->gb);
 		int long_term_flag = get_u1(&dec->gb);
-		dec->short_term_frames = (long_term_flag ^ 1) << dec->currPic;
-		dec->long_term_frames = long_term_flag << dec->currPic;
+		dec->short_term_frames = (unsigned)(long_term_flag ^ 1) << dec->currPic;
+		dec->long_term_frames = (unsigned)long_term_flag << dec->currPic;
 		dec->LongTermFrameIdx_v[0] = dec->LongTermFrameIdx_v[1] = (i8x16){};
 		log_dec(dec, "  no_output_of_prior_pics_flag: %d\n"
 			"  long_term_reference_flag: %d\n",
