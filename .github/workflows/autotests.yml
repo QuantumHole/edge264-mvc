@@ -49,7 +49,7 @@ jobs:
         with:
           msystem: MINGW64
           install: make mingw-w64-x86_64-gcc
-      - run: make OS=windows CFLAGS=-march=x86-64 CPPFLAGS=-DNDEBUG "LDFLAGS=-static -lwinpthread" VARIANTS=x86-64-v2,x86-64-v3,logs BUILDTEST=no conformance_check.exe liveness_check.exe asan_check.exe api_check.exe
+      - run: make OS=windows CFLAGS=-march=x86-64 CPPFLAGS=-DNDEBUG VARIANTS=x86-64-v2,x86-64-v3,logs BUILDTEST=no conformance_check.exe liveness_check.exe asan_check.exe api_check.exe
       - run: ./conformance_check.exe run tests/conformance/manifest.txt tests/conformance
       - run: EDGE264MVC_THREADS=8 ./conformance_check.exe run tests/conformance/manifest.txt tests/conformance
       - run: EDGE264MVC_THREADS=8 ./liveness_check.exe run tests/liveness/manifest.txt tests/liveness
