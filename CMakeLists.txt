@@ -69,7 +69,7 @@ set(_prefix "${CMAKE_CURRENT_BINARY_DIR}/edge264mvc-install")
 set(_args
   OS=${_os}
   STATIC=${_static}
-  BUILD_TEST=no
+  BUILDTEST=no
   PREFIX=${_prefix}
 )
 
@@ -114,6 +114,10 @@ else()
 endif()
 
 add_dependencies(edge264mvc edge264mvc_ext)
+# The include directory is created by the install step at build time, but
+# CMake rejects an imported target whose include directory does not exist
+# yet when it configures the consumer, so create it now.
+file(MAKE_DIRECTORY "${_prefix}/include")
 set_target_properties(edge264mvc PROPERTIES
   IMPORTED_LOCATION             "${_prefix}/lib/${_libfile}"
   INTERFACE_INCLUDE_DIRECTORIES "${_prefix}/include")

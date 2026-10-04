@@ -145,6 +145,7 @@ The Windows DLL is cross-built with MinGW-w64; wasm via Node:
 | Probe Node for relaxed-SIMD flag support in the wasm `make check` | edge264-mvc |
 | Guard the multithreaded ref-dependency mask against empty `RefPicList` slots on the portable non-SIMD path | [issue #28](https://github.com/tvlabs/edge264/issues/28) |
 | Export only the `edge264mvc_*` API from the shared library (`-fvisibility=hidden` on ELF, `__declspec(dllexport)` on Windows) - the internal functions were exported too, so their names could clash with other libraries in the same process | edge264-mvc |
+| Create the include directory of the CMake imported target when configuring, and pass `BUILDTEST` to the Makefile under its real name | a project using edge264-mvc through `FetchContent` or `add_subdirectory`, as the README documents, failed at configure time ("imported target includes non-existent path"), and the test tool was built along with the library |
 | Pair `-march=native` with `-mtune=generic` on native builds - GCC's per-microarch cost model schedules measurably slower code than generic tuning for this hand-written-SIMD codebase (cross-compiled / `-march=x86-64-v*` distribution builds already tune generic and are unaffected) | edge264-mvc |
 
 ## Deliberately not included

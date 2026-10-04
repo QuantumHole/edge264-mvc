@@ -19,6 +19,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - run: make CFLAGS="-march=x86-64" VARIANTS=x86-64-v2,x86-64-v3,logs check
+      - run: make clean && cmake -S tests/cmake -B build-cmake && cmake --build build-cmake && ./build-cmake/consumer
   arm64-linux-gnu:
     runs-on: ubuntu-24.04-arm
     steps:
