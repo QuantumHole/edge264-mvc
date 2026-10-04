@@ -7,13 +7,14 @@ from timeit import timeit
 if not(len(sys.argv) == 3 and
        which("edge264mvc_test-gcc") and
        which("edge264mvc_test-clang") and
-       which("edge264_test-stock") and
+       which("edge264_test-stock-gcc") and
+       which("edge264_test-stock-clang") and
        which("ffmpeg") and
        which("avcdec") and
        which("h264dec")):
 	print(f"Usage: {sys.argv[0]} <video.264> <nb_runs>\n" +
 		"PATH must contain the paths to edge264mvc_test-gcc, edge264mvc_test-clang,\n" +
-		"edge264_test-stock (the original edge264), ffmpeg,\n" +
+		"edge264_test-stock-gcc, edge264_test-stock-clang (the original edge264), ffmpeg,\n" +
 		"avcdec and h264dec")
 	exit(1)
 
@@ -55,7 +56,7 @@ def libavc_time(cores):
 def openh264_time():
 	return float(run(["h264dec", sys.argv[1]], capture_output=True).stderr.split(b"\n")[6].split()[2])
 
-cols = ["edge264-mvc-GCC-1T", "edge264-mvc-GCC-MT", "edge264-mvc-Clang-1T", "edge264-mvc-Clang-MT", "edge264-GCC-1T",
+cols = ["edge264-mvc-GCC-1T", "edge264-mvc-GCC-MT", "edge264-mvc-Clang-1T", "edge264-mvc-Clang-MT", "edge264-GCC-1T", "edge264-Clang-1T",
 	"FFmpeg-1T", "FFmpeg-MT", "LibAVC-1T", "LibAVC-MT", "OpenH264"]
 samples = {c: [] for c in cols}
 for _ in range(int(sys.argv[2])):
@@ -63,7 +64,8 @@ for _ in range(int(sys.argv[2])):
 	samples["edge264-mvc-GCC-MT"].append(edge264_time("edge264mvc_test-gcc", "-mby"))
 	samples["edge264-mvc-Clang-1T"].append(edge264_time("edge264mvc_test-clang", "-sby"))
 	samples["edge264-mvc-Clang-MT"].append(edge264_time("edge264mvc_test-clang", "-mby"))
-	samples["edge264-GCC-1T"].append(edge264_time("edge264_test-stock", "-by"))
+	samples["edge264-GCC-1T"].append(edge264_time("edge264_test-stock-gcc", "-by"))
+	samples["edge264-Clang-1T"].append(edge264_time("edge264_test-stock-clang", "-by"))
 	samples["FFmpeg-1T"].append(ffmpeg_time(1))
 	samples["FFmpeg-MT"].append(ffmpeg_time(0))
 	samples["LibAVC-1T"].append(libavc_time(1))

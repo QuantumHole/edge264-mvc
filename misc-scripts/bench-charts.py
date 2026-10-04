@@ -1,72 +1,80 @@
 #!python3
-import base64, datetime, json, matplotlib, matplotlib.colors as mcolors, matplotlib.pyplot as plt, numpy as np, sys
+import datetime, json, matplotlib, matplotlib.pyplot as plt, sys
 matplotlib.use("Agg")
 
-# print usage if wrong number of inputs or ill-formed JSON
+# Draws the benchmark results as two charts, one single-threaded and one
+# multithreaded, from a JSON matrix of architectures and decoders such as
+# {"x86-64": {"edge264-mvc-GCC-1T": 3.8, "edge264-mvc-GCC-MT": 2.3, ...}, ...}.
+# A name ending in -1T or -MT is one decoder timed single- or multithreaded; a
+# name without the suffix is a decoder that only decodes single-threaded. Each
+# chart has one panel per architecture, with horizontal bars named on the axis,
+# so no legend is needed.
 data = None
-if len(sys.argv) == 3:
+if len(sys.argv) == 4:
 	try: data = json.loads(sys.argv[1])
 	except: pass
 if not data:
-	print(f"Usage: {sys.argv[0]} <json> <output.svg>\n" +
+	print(f"Usage: {sys.argv[0]} <json> <single-threaded.svg> <multithreaded.svg>\n" +
 		"data should be a matrix with named rows and columns encoded in JSON, like\n" +
-		'{"x86":{"edge":0,"other":1},"arm64":{"edge":2,"other":3}}', file=sys.stderr)
+		'{"x86-64":{"edge264-mvc-GCC-1T":3.8,"edge264-mvc-GCC-MT":2.3},"arm64":{...}}', file=sys.stderr)
 	exit(1)
-rnames = list(data.keys())
-cnames = list(tuple(data.values())[0].keys())
-d = datetime.datetime.today()
 
-# generate output chart
-width = 1 / (len(cnames) + 1)
-fig, ax = plt.subplots(figsize=(max(6, 0.9 * len(cnames) + 1.5), 4), layout="constrained")
-# Pair the single-/multi-thread bars of each decoder under one hue: 1T is a
-# pastel tint, MT the same hue at full strength; a decoder without a 1T/MT split
-# (e.g. OpenH264) uses its hue at full strength.
-def base_kind(name):
+# why a decoder has no multithreaded bar, shown in red in its row
+NO_MT_REASON = {"edge264-GCC": "hangs", "edge264-Clang": "hangs", "OpenH264": "not supported"}
+
+def split(name):
 	for s in ("-1T", "-MT"):
 		if name.endswith(s):
 			return name[:-3], s[1:]
-	return name, "MT"
+	return name, "1T"
 
-def tint(color, amount): # blend toward white; amount in [0,1], higher = lighter
-	r, g, b = mcolors.to_rgb(color)
-	return (r + (1 - r) * amount, g + (1 - g) * amount, b + (1 - b) * amount)
+def label(base):
+	if base.startswith("edge264-mvc-"):
+		return f"edge264-mvc ({base[12:]})"
+	if base.startswith("edge264-"):
+		return f"edge264 ({base[8:]})"
+	return base
 
-bases = []
-for cname in cnames:
-	b = base_kind(cname)[0]
-	if b not in bases:
-		bases.append(b)
-palette = matplotlib.colormaps["tab10"].colors
-base_color = {b: palette[i % len(palette)] for i, b in enumerate(bases)}
+archs = list(data.keys())
+decoders = []
+for name in tuple(data.values())[0]:
+	if split(name)[0] not in decoders:
+		decoders.append(split(name)[0])
+# no red among the decoders: red marks the missing multithreaded results
+palette = [c for i, c in enumerate(matplotlib.colormaps["tab10"].colors) if i != 3]
+color = {d: palette[i % len(palette)] for i, d in enumerate(decoders)}
+values = {kind: {a: {} for a in archs} for kind in ("1T", "MT")}
+for a, row in data.items():
+	for name, v in row.items():
+		base, kind = split(name)
+		values[kind][a][base] = v
+top = max(max(r.values()) for r in values["1T"].values() if r) # the same scale for both charts
 
-# x-offset of each bar within an architecture group, inserting a small gap
-# whenever the decoder/compiler changes so every 1T/MT pair stands as a group
-group_gap = width * 0.6
-centers, off, prev = [], 0.0, None
-for cname in cnames:
-	b = base_kind(cname)[0]
-	if prev is not None and b != prev:
-		off += group_gap
-	centers.append(off)
-	off, prev = off + width, b
-centers = np.array(centers)
-x = np.arange(len(rnames)) * (centers[-1] + width * 2) # space the architecture groups apart
+def chart(kind, title, path):
+	rows = list(range(len(decoders)))[::-1] # first decoder on top
+	fig, axes = plt.subplots(1, len(archs), sharey=True, figsize=(4.2 * len(archs) + 1.6, 0.42 * len(decoders) + 1.2), layout="constrained")
+	axes = axes if len(archs) > 1 else [axes]
+	for ax, a in zip(axes, archs):
+		for y, d in zip(rows, decoders):
+			v = values[kind][a].get(d)
+			if v is not None:
+				ax.barh(y, v, 0.7, color=color[d], zorder=3)
+				ax.text(v + top * 0.015, y, f"{v:.1f} s", va="center", fontsize=9, color="#333")
+			else:
+				ax.text(top * 0.015, y, "✗ " + NO_MT_REASON.get(d, "n/a"), va="center", fontsize=9, color="#d62728", fontweight="bold")
+		ax.set_title(a, color="#555", fontsize=10)
+		ax.set_xlim(0, top * 1.18)
+		ax.set_ylim(-0.7, len(decoders) - 0.3)
+		ax.tick_params(colors="#555", labelsize=9)
+		ax.spines[["top", "right"]].set_visible(False)
+		ax.spines[["left", "bottom"]].set_color("#999")
+		ax.grid(axis="x", color="#ccc", linestyle="--", linewidth=0.7, zorder=0)
+		ax.set_xlabel("Seconds (lower is better)", color="#555", fontsize=9)
+	axes[0].set_yticks(rows, [label(d) for d in decoders])
+	fig.suptitle(title, color="#444", fontsize=11)
+	plt.savefig(path)
+	plt.close(fig)
 
-for c, cname in enumerate(cnames):
-	b, kind = base_kind(cname)
-	strong = base_color[b]
-	color = tint(strong, 0.55) if kind == "1T" else strong
-	rects = ax.bar(x + centers[c], [r[cname] for r in data.values()], width * 0.9,
-		label=cname, color=color, edgecolor=strong, linewidth=0.6, zorder=3)
-	ax.bar_label(rects, fmt="{:.1f}", padding=3)
-ax.set_xticks(x + centers[-1] / 2, rnames)
-ax.set_ylabel("Seconds", color="#555", fontsize=10)
-ax.set_title(d.strftime("Decoding time measured on %d/%m/%Y (lower is better)"), color="#555")
-ax.set_ylim(0, 1.08 * max(max(r.values()) for r in data.values()))
-ax.tick_params(colors="#555")
-ax.spines[:].set_color("#555")
-ax.grid(axis="y", color="#aaa", linestyle="--", linewidth=0.7, zorder=0)
-ax.legend(facecolor="#222", edgecolor="#aaa", labelcolor="#fff", fontsize=10,
-	loc="upper left", bbox_to_anchor=(1.01, 1.0))
-plt.savefig(sys.argv[2])
+date = datetime.datetime.today().strftime("%d/%m/%Y")
+chart("1T", f"Single-threaded decoding time, measured on {date}", sys.argv[2])
+chart("MT", f"Multithreaded decoding time (all cores), measured on {date}", sys.argv[3])

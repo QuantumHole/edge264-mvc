@@ -16,9 +16,11 @@ edge264-mvc is derived from [edge264](https://github.com/tvlabs/edge264) by Thib
 
 See [IMPROVEMENTS.md](IMPROVEMENTS.md) for everything that edge264-mvc changes over edge264.
 
-![](README-benchmark.svg)
+![Single-threaded decoding time](README-benchmark-1T.svg)
 
-*Benchmark computed as the fastest of 10 runs of [Big Buck Bunny test video](https://test-videos.co.uk/vids/bigbuckbunny/mp4/h264/1080/Big_Buck_Bunny_1080_10s_30MB.mp4), on GitHub-hosted runners. Each decoder is timed both single-threaded (`1T`) and multithreaded (`MT`, all auto-detected cores) for a fair comparison at both ends; OpenH264's decoder has no multithreading, so it is shown once, and the original edge264 (at a fixed commit) is shown single-threaded, as its experimental multithreading hangs on this stream. All times are wall-clock - the MT speedup is bounded by the runner's few vCPUs, so a many-core machine gains more.*
+![Multithreaded decoding time](README-benchmark-MT.svg)
+
+*Decoding time of the [Big Buck Bunny test video](https://test-videos.co.uk/vids/bigbuckbunny/mp4/h264/1080/Big_Buck_Bunny_1080_10s_30MB.mp4) (1080p), the fastest of 10 runs on GitHub-hosted runners, once on one core and once with all cores. A red cross marks a decoder without a multithreaded result: OpenH264's decoder has no multithreading, and the experimental multithreading of the original edge264 (at a fixed commit) hangs on this video. The runners have only a few cores, so a many-core machine gains more from multithreading.*
 
 
 ## Supported streams and platforms

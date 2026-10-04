@@ -39,7 +39,10 @@ jobs:
           git -C edge264-stock fetch -q --depth=1 https://github.com/tvlabs/edge264.git 2c2ab95d63c1ad89c5687f9e50b57cad772c871b
           git -C edge264-stock checkout -q FETCH_HEAD
           make -C edge264-stock STATIC=yes
-          mv edge264-stock/edge264_test edge264_test-stock
+          mv edge264-stock/edge264_test edge264_test-stock-gcc
+          make -C edge264-stock clear
+          make -C edge264-stock STATIC=yes CC=clang
+          mv edge264-stock/edge264_test edge264_test-stock-clang
       - run: |
           git clone --depth=1 https://github.com/cisco/openh264.git
           make -C openh264
@@ -69,13 +72,14 @@ jobs:
           pip3 install matplotlib --quiet
           results="{\"x86-64\":${RESULTS_X64},\"arm64\":${RESULTS_ARM64}}"
           echo "${results}"
-          python3 ./misc-scripts/bench-charts.py "${results}" README-benchmark.svg
+          python3 ./misc-scripts/bench-charts.py "${results}" README-benchmark-1T.svg README-benchmark-MT.svg
       - uses: actions/upload-artifact@v6
         with:
-          path: README-benchmark.svg
+          path: README-benchmark-*.svg
       - run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add -f README-benchmark.svg
+          git rm -q --ignore-unmatch README-benchmark.svg
+          git add -f README-benchmark-1T.svg README-benchmark-MT.svg
           git commit -m "[Benchmarks] Update figure"
           git push
