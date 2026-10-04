@@ -252,7 +252,7 @@ else ifeq ($(OS),android)
 else ifeq ($(OS),windows)
   override LIBFLAGS := -shared $(LDFLAGS) $(LIBFLAGS)
 else ifeq ($(OS),wasm)
-  override LIBFLAGS := -sEXPORTED_FUNCTIONS=_malloc,_free,_edge264_find_start_code,_edge264_alloc,_edge264_flush,_edge264_free,_edge264_decode_NAL,_edge264_get_frame,_edge264_return_frame $(LDFLAGS) $(LIBFLAGS)
+  override LIBFLAGS := -sEXPORTED_FUNCTIONS=_malloc,_free,_edge264mvc_api_version,_edge264mvc_version,_edge264mvc_default_settings,_edge264mvc_open,_edge264mvc_close,_edge264mvc_send_nal,_edge264mvc_send_end,_edge264mvc_receive_frame,_edge264mvc_release_frame,_edge264mvc_flush,_edge264mvc_find_start_code $(LDFLAGS) $(LIBFLAGS)
 endif
 
 # ---- Linker flags for the executables ----------------------------------------
