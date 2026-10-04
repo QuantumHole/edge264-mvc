@@ -8,11 +8,14 @@
 !LICENSE_BSD.txt
 !Makefile
 !README.md
+!IMPROVEMENTS.md
+!DESIGN.md
 !CMakeLists.txt
 !*.in
 !tests
 !tests/*.yaml
 !tests/*.264
+!tests/ROADMAP.md
 !tests/gen_cabac_overread.py
 !tests/gen_cabac_orphan.py
 !tests/edge264mvc_test_liveness.py
