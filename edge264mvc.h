@@ -87,6 +87,13 @@ enum {
 	EDGE264MVC_INVALID = -6,
 };
 
+/**
+ * Threading: call the functions of one decoder from one thread at a time (a
+ * player that sends from one thread and receives from another serializes the
+ * calls with its own lock). The decoder's worker threads are internal to it.
+ * Different decoders are independent and can be used from different threads
+ * at the same time.
+ */
 typedef struct Edge264MvcDecoder Edge264MvcDecoder;
 
 /**

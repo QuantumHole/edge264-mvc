@@ -399,7 +399,7 @@ uninstall:
 # ==============================================================================
 .PHONY: clean clear
 clean clear:
-	$(Q)rm -f edge264mvc_test edge264mvc_test.exe edge264mvc_test.js edge264mvc_test.wasm edge264mvc_check edge264mvc_check.exe edge264mvc_check.js edge264mvc_check.wasm conformance_check conformance_check.exe liveness_check liveness_check.exe asan_check asan_check.exe api_check api_check.exe fuzz_decode edge264*.o libedge264mvc.a edge264mvc.$(MAJOR).dll libedge264mvc.dll.a edge264mvc.js edge264mvc.wasm libedge264mvc.$(MAJOR).dylib libedge264mvc-universal.$(MAJOR).dylib libedge264mvc.so libedge264mvc.so.$(MAJOR)
+	$(Q)rm -f edge264mvc_test edge264mvc_test.exe edge264mvc_test.js edge264mvc_test.wasm edge264mvc_check edge264mvc_check.exe edge264mvc_check.js edge264mvc_check.wasm conformance_check conformance_check.exe liveness_check liveness_check.exe asan_check asan_check.exe api_check api_check.exe multi_decoder_check multi_decoder_check.exe fuzz_decode edge264*.o libedge264mvc.a edge264mvc.$(MAJOR).dll libedge264mvc.dll.a edge264mvc.js edge264mvc.wasm libedge264mvc.$(MAJOR).dylib libedge264mvc-universal.$(MAJOR).dylib libedge264mvc.so libedge264mvc.so.$(MAJOR)
 
 
 # ==============================================================================
@@ -424,6 +424,7 @@ else
 	$(Q)$(MAKE) --no-print-directory check-edge264mvc-test-liveness
 	$(Q)$(MAKE) --no-print-directory check-robustness
 	$(Q)$(MAKE) --no-print-directory check-api
+	$(Q)$(MAKE) --no-print-directory check-multi-decoder
 endif
 
 edge264mvc_check$(EXE): src/edge264mvc_check.c edge264mvc.h src/edge264mvc_internal.h $(LIBNAME)
@@ -517,6 +518,15 @@ check-api: api_check$(EXE)
 
 api_check$(EXE): tests/api_check.c edge264mvc.h $(LIBNAME)
 	$(Q)$(CCLD) -I. tests/api_check.c $(CPPFLAGS) $(CFLAGS) $(EXEFLAGS) -o $@
+
+# Several decoders in several threads at once (the API allows it): each run
+# must give the frame count of a run alone. Run under ThreadSanitizer in CI.
+.PHONY: check-multi-decoder
+check-multi-decoder: multi_decoder_check$(EXE)
+	$(Q)$(TIMEOUT) ./multi_decoder_check$(EXE) tests/conformance/mvc/MVCDS-5.264 9 tests/conformance/2d/CABA3_Sony_C.264 300
+
+multi_decoder_check$(EXE): tests/multi_decoder_check.c edge264mvc.h $(LIBNAME)
+	$(Q)$(CCLD) -I. tests/multi_decoder_check.c $(CPPFLAGS) $(CFLAGS) $(EXEFLAGS) -o $@
 
 # The same crafted fixtures without a sanitizer, single-threaded and with four
 # worker threads, as part of `check`: they also guard hangs, some of which need
