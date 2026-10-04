@@ -345,6 +345,21 @@ static void free_decoder(Edge264Decoder **pdec) {
 
 
 
+/**
+ * Called when the output queues have no room left for this NAL and
+ * output_stalled, which only a damaged stream causes (more pictures
+ * awaiting output than a conformant DPB holds, or a front picture held for a
+ * dependent view that never completes). Waiting for get_frame would then wait
+ * forever, so fill the queues with the pictures awaiting output and let
+ * get_frame emit them as at the end of a stream.
+ */
+static void unblock_output(Edge264Decoder *dec) {
+	for (int v = 0; v < 2; v++)
+		while (__builtin_ctz(movemask(dec->get_frame_queue_v[v]) | 1 << 16) < 16 && bump_frame(dec, v, 0));
+	dec->flushing = 1; // cleared by the next NAL that passes the gate
+}
+
+
 // Frees a decoder-owned copy of a slice NAL once its worker thread is done with
 // it. Installed as the task's unref_cb in the multithreaded path (see
 // edge264_decode_NAL) - workers decode slices asynchronously after decode_NAL
@@ -408,6 +423,8 @@ static int decode_nal(Edge264Decoder *dec, const uint8_t *buf, const uint8_t *en
 	int pending_base = __builtin_popcount(dec->to_get_frames & ~dec->output_frames & ~dec->non_base_frames);
 	int pending_dep = __builtin_popcount(dec->to_get_frames & ~dec->output_frames & dec->non_base_frames);
 	if (queued0 + max(1, pending_base) > 16 || queued1 + max(1, pending_dep) > 16) {
+		if (output_stalled(dec))
+			unblock_output(dec);
 		if (dec->n_threads)
 			pthread_mutex_unlock(&dec->lock);
 		return ENOBUFS;
@@ -561,7 +578,10 @@ static int get_frame(Edge264Decoder *dec, Edge264Frame *out, int borrow) {
 		// ENOBUFS while a draining caller gets nothing. Emit it anyway while
 		// flushing so the caller always makes forward progress and the decoder
 		// terminates - what ffmpeg does (it conceals the partial picture).
-		if (__atomic_load_n(&dec->next_deblock_addr[queued], __ATOMIC_ACQUIRE) != INT_MAX && !dec->flushing)
+		// The picture being parsed is never emitted before it is complete, as
+		// more of its slices are still to come.
+		if (__atomic_load_n(&dec->next_deblock_addr[queued], __ATOMIC_ACQUIRE) != INT_MAX &&
+			(!dec->flushing || queued == dec->currPic))
 			continue;
 		if (idx0 >= 0 && order >= lowest_order)
 			continue;
@@ -695,7 +715,7 @@ static int get_frame(Edge264Decoder *dec, Edge264Frame *out, int borrow) {
 			}
 		}
 		if (dec->ssps.BitDepth_Y == 0 || idx1 >= 0 || force_unpaired) {
-		dec->get_frame_queue[0][idx0] = -1;
+		dequeue_frame(dec, 0, idx0);
 		memcpy(out, &dec->out, sizeof(*out)); // GCC-14 crashes on dec->out = format
 		int top = dec->out.frame_crop_offsets[0];
 		int left = dec->out.frame_crop_offsets[3];
@@ -715,7 +735,7 @@ static int get_frame(Edge264Decoder *dec, Edge264Frame *out, int borrow) {
 		out->DisplayPoc_mvc = 0;
 		out->return_arg = (void *)((uintptr_t)1 << pic0);
 		if (idx1 >= 0) {
-			dec->get_frame_queue[1][idx1] = -1;
+			dequeue_frame(dec, 1, idx1);
 			assert(dec->to_get_frames & dec->output_frames & 1u << pic1);
 			dec->to_get_frames ^= 1u << pic1;
 			out->samples_mvc[0] = dec->samples_buffers[pic1] + offY;
@@ -727,6 +747,7 @@ static int get_frame(Edge264Decoder *dec, Edge264Frame *out, int borrow) {
 			out->return_arg = (void *)((uintptr_t)1 << pic0 | (uintptr_t)1 << pic1);
 		}
 		res = 0;
+		dec->undelivered = 0;
 		if (!borrow)
 			dec->output_frames &= ~(uintptr_t)out->return_arg;
 		}
@@ -783,10 +804,11 @@ static int get_frame(Edge264Decoder *dec, Edge264Frame *out, int borrow) {
 				// output queue, to_get_frames, and output_frames (set when the
 				// frame was bumped, headers.c bump_frame) - bump_all_frames keeps
 				// returning ENOBUFS at end-of-stream while either bit is set.
-				dec->get_frame_queue[1][i] = -1;
+				dequeue_frame(dec, 1, i--);
 				dec->to_get_frames &= ~(1u << dep);
 				dec->output_frames &= ~(1u << dep);
 				dropped_orphan = 1;
+				dec->undelivered = 0;
 			}
 		}
 	}
@@ -1001,7 +1023,7 @@ void edge264mvc_release_frame(Edge264MvcDecoder *dec, const Edge264MvcFrame *fra
 void edge264mvc_flush(Edge264MvcDecoder *dec) {
 	flush_decoder(dec);
 	if (dec != NULL)
-		dec->want_frame = dec->ended = 0;
+		dec->want_frame = dec->ended = dec->undelivered = 0;
 }
 
 size_t edge264mvc_find_start_code(const uint8_t *buf, size_t size) {

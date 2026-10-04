@@ -15,3 +15,5 @@ reader_overrun
 subpartition_neighbours
 mvc_format_change_unpaired
 mvc_subset_sps_size
+mvc_dpb_full_unpaired
+output_queue_full

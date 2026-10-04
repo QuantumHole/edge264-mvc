@@ -128,3 +128,19 @@ guard against sanitizer aborts and CPU-burn.
   single allocations at 2 GB). Every view of MVC has the frame size of the base
   view, so a dependent slice whose subset SPS does not match the base SPS is
   now rejected as damaged.
+- mvc_dpb_full_unpaired.264: a fuzzer-found MVC stream that fills all 32 DPB
+  slots with pictures waiting for output while the caller holds none, with a
+  base view held for a dependent view that never completes. The new-picture
+  slot check returned ENOBUFS to wait for get_frame, which had nothing it could
+  emit, forever. The slot check now finishes the running tasks, conceals and
+  queues the waiting pictures as at the end of a stream and lets get_frame emit
+  them (make_room). The harness reports the stall.
+- output_queue_full.264: a fuzzer-found stream that leaves more pictures
+  waiting for output than the 16-entry output queue of their view holds, while
+  the queued front picture cannot be emitted yet. The queue gate in
+  decode_nal returned ENOBUFS for every NAL, including the slices that
+  would complete that front picture, so no frame ever came out. When the caller
+  holds no frame the gate now fills the queues and lets get_frame emit as at
+  the end of a stream (unblock_output). get_frame also keeps the queues packed
+  when a frame leaves them, since a gap let later bumps push a queued picture
+  out of the queue. The harness reports the stall.

@@ -457,6 +457,7 @@ struct Edge264MvcDecoder {
 	int32_t max_frame_mbs; // largest frame accepted, in macroblocks
 	int8_t want_frame; // send_nal returned EDGE264MVC_AGAIN, so receive_frame waits for a frame
 	int8_t ended; // send_end was called, so receive_frame drains to EDGE264MVC_END
+	int8_t undelivered; // the DPB or output queue was full while the caller held no frame, and no frame came out since
 	int64_t in_pts; // values sent with the NAL being parsed
 	int64_t in_user_data;
 	

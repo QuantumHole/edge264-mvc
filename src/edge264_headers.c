@@ -75,6 +75,19 @@ static void unset_currPic(Edge264Decoder *dec) {
 	dec->currPic = -1;
 }
 
+/**
+ * Removes entry i of an output queue and closes the gap, so that the entries
+ * stay packed at the front. bump_frame shifts a new entry in at index 0 and
+ * drops index 15, and the fullness gate in decode_nal counts the
+ * entries before the first empty one, so a gap left in the middle let later
+ * bumps push a queued picture out of the queue, where get_frame never sees it.
+ */
+static void dequeue_frame(Edge264Decoder *dec, int view, int i) {
+	for (; i < 15; i++)
+		dec->get_frame_queue[view][i] = dec->get_frame_queue[view][i + 1];
+	dec->get_frame_queue[view][15] = -1;
+}
+
 static int bump_frame(Edge264Decoder *dec, int non_base_view, unsigned ignored) {
 	int pic = -1;
 	int lowest_poc = INT_MAX;
@@ -1434,6 +1447,72 @@ static void progress_or_wait(Edge264Decoder *dec) {
 
 
 /**
+ * Tells whether a full DPB or output queue is a stall that waiting cannot
+ * resolve. A caller holding frames makes room by releasing them, and under
+ * multithreading the pictures still being decoded come out once their tasks
+ * finish. So the first time the caller holds no frame, finish the running
+ * tasks and let the caller receive as usual (ENOBUFS). Only if no frame came
+ * out of that round either, nothing but a valve can make progress. The tasks
+ * are finished at both rounds, so the outcome does not depend on the threads.
+ */
+static int output_stalled(Edge264Decoder *dec) {
+	if (dec->output_frames & ~dec->to_get_frames) {
+		dec->undelivered = 0;
+		return 0;
+	}
+	if (dec->undelivered)
+		return 1;
+	while (dec->busy_tasks)
+		progress_or_wait(dec);
+	dec->undelivered = 1;
+	return 0;
+}
+
+
+
+/**
+ * Called before a new picture (currPic < 0) when every DPB slot is taken by a
+ * reference or a picture waiting for output and output_stalled, which only a
+ * damaged stream causes, since a conformant one stays within
+ * max_dec_frame_buffering. Returning ENOBUFS would then wait for frames
+ * get_frame never delivers: a base held for a dependent view that will never
+ * complete, or no picture queued at all. Instead, finish the in-flight tasks,
+ * conceal and queue every picture waiting for output as at the end of a
+ * stream, and let get_frame emit them, or with only references left, drop the
+ * oldest one as the sliding window would (8.2.5.3). Waiting for the tasks
+ * first keeps the outcome independent of the thread timing. Returns 1 if the
+ * caller can now receive frames.
+ */
+static int make_room(Edge264Decoder *dec, int non_base_view) {
+	if (bump_all_frames(dec)) {
+		dec->flushing = 1; // cleared by the next NAL
+		return 1;
+	}
+	unsigned same_views = non_base_view ? dec->non_base_frames : ~dec->non_base_frames;
+	unsigned refs = dec->prev_short_term_frames & ~dec->prev_long_term_frames;
+	refs = (refs & same_views) ? refs & same_views : refs;
+	int unref = -1, lowest = INT_MAX;
+	for (unsigned r = refs; r; r &= r - 1) {
+		int i = __builtin_ctz(r);
+		if (dec->FrameIds[i] < lowest)
+			lowest = dec->FrameIds[unref = i];
+	}
+	if (unref < 0) // only long-term references left
+		for (unsigned r = dec->prev_long_term_frames; r; r &= r - 1) {
+			int i = __builtin_ctz(r);
+			if (dec->FrameIds[i] < lowest)
+				lowest = dec->FrameIds[unref = i];
+		}
+	if (unref >= 0) {
+		dec->prev_short_term_frames &= ~(1u << unref);
+		dec->prev_long_term_frames &= ~(1u << unref);
+	}
+	return 0;
+}
+
+
+
+/**
  * This function matches slice_header() in 7.3.3, which it parses while updating
  * the DPB and initialising slice data for further decoding.
  */
@@ -1738,8 +1817,11 @@ int ADD_VARIANT(parse_slice_layer_without_partitioning)(Edge264Decoder *dec, Edg
 		// > 32 ENOBUFS backpressure below. Keying this to MFB aborted such streams
 		// (issue #2). Conformant streams stay <= MFB, so this is inert for them.
 		assert(non_existing + __builtin_popcount(reference_frames | dec->to_get_frames & ~dec->output_frames) <= 32);
-		if (non_existing + __builtin_popcount(reference_frames | dec->to_get_frames | dec->output_frames) > 32)
-			return ENOBUFS; // exit here if we must wait for get_frame to consume and return enough frames
+		while (non_existing + __builtin_popcount(reference_frames | dec->to_get_frames | dec->output_frames) > 32) {
+			if (!output_stalled(dec) || make_room(dec, non_base_view))
+				return ENOBUFS; // exit here if we must wait for get_frame to consume and return enough frames
+			reference_frames = dec->prev_short_term_frames | dec->prev_long_term_frames;
+		}
 		// wait until enough empty slots are undepended and not written by in-flight tasks
 		unsigned unavail;
 		while (non_existing + __builtin_popcount(unavail = reference_frames | dec->to_get_frames | dec->output_frames | depended_frames(dec) | inflight_frames(dec)) > 32)
@@ -1783,8 +1865,11 @@ int ADD_VARIANT(parse_slice_layer_without_partitioning)(Edge264Decoder *dec, Edg
 	// find and possibly allocate a memory slot for the upcoming frame
 	if (dec->currPic < 0) {
 		unsigned reference_frames = dec->prev_short_term_frames | dec->prev_long_term_frames;
-		if (__builtin_popcount(reference_frames | dec->to_get_frames | dec->output_frames) == 32)
-			return ENOBUFS; // exit here if we must wait for get_frame to consume and return a frame slot
+		while (__builtin_popcount(reference_frames | dec->to_get_frames | dec->output_frames) == 32) {
+			if (!output_stalled(dec) || make_room(dec, non_base_view))
+				return ENOBUFS; // exit here if we must wait for get_frame to consume and return a frame slot
+			reference_frames = dec->prev_short_term_frames | dec->prev_long_term_frames;
+		}
 		// wait until at least one empty slot is undepended and not written by an
 		// in-flight task (or returned in the meantime). inflight_frames matters
 		// when a frame leaves to_get_frames/output_frames while its decode tasks
