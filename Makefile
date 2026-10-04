@@ -232,7 +232,9 @@ override CFLAGS := $(_BASE_ARCH) -std=gnu11 -O3 -flax-vector-conversions -Wno-ov
 ifeq ($(STATIC),no)
   _PIC_FLAG := $(if $(findstring $(OS),macos linux android),-fPIC)
 endif
-override OBJFLAGS := $(_PIC_FLAG) $(OBJFLAGS)
+# Only the edge264mvc_* API leaves the shared library: everything else is
+# hidden, so internal names cannot clash with other libraries in a process.
+override OBJFLAGS := $(_PIC_FLAG) -fvisibility=hidden -DEDGE264MVC_BUILD $(OBJFLAGS)
 
 # ---- Common linker flags -----------------------------------------------------
 ifeq ($(OS),wasm)

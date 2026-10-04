@@ -38,6 +38,16 @@
 extern "C" {
 #endif
 
+// marks the functions exported from the shared library, which is built with
+// hidden visibility for everything else
+#if defined(EDGE264MVC_BUILD) && defined(_WIN32)
+	#define EDGE264MVC_API __declspec(dllexport) // once one symbol is, MinGW exports no others
+#elif defined(EDGE264MVC_BUILD) && defined(__GNUC__)
+	#define EDGE264MVC_API __attribute__((visibility("default")))
+#else
+	#define EDGE264MVC_API
+#endif
+
 /**
  * Version of this header. A library with the same major version and a minor
  * version at least as high implements it; edge264mvc_api_version() returns
@@ -154,22 +164,22 @@ typedef struct Edge264MvcFrame {
 /**
  * Library version, as (major << 16 | minor << 8 | patch) and as a string.
  */
-uint32_t edge264mvc_api_version(void);
-const char *edge264mvc_version(void);
+EDGE264MVC_API uint32_t edge264mvc_api_version(void);
+EDGE264MVC_API const char *edge264mvc_version(void);
 
-void edge264mvc_default_settings(Edge264MvcSettings *settings);
+EDGE264MVC_API void edge264mvc_default_settings(Edge264MvcSettings *settings);
 
 /**
  * Allocates a decoder with the given settings (NULL for the defaults).
  * Returns EDGE264MVC_OK, EDGE264MVC_NOMEM or EDGE264MVC_INVALID.
  */
-int edge264mvc_open(Edge264MvcDecoder **decoder, const Edge264MvcSettings *settings);
+EDGE264MVC_API int edge264mvc_open(Edge264MvcDecoder **decoder, const Edge264MvcSettings *settings);
 
 /**
  * Stops the worker threads and frees the decoder, including the frames not
  * released yet. Sets *decoder to NULL. Accepts NULL.
  */
-void edge264mvc_close(Edge264MvcDecoder **decoder);
+EDGE264MVC_API void edge264mvc_close(Edge264MvcDecoder **decoder);
 
 /**
  * Sends one NAL unit, without its 00 00 01 start code. The bytes are copied
@@ -180,14 +190,14 @@ void edge264mvc_close(Edge264MvcDecoder **decoder);
  * NAL again), EDGE264MVC_UNSUPPORTED or EDGE264MVC_CORRUPT (skipped, send the
  * next NAL), EDGE264MVC_NOMEM or EDGE264MVC_INVALID.
  */
-int edge264mvc_send_nal(Edge264MvcDecoder *decoder, const uint8_t *nal, size_t size, int64_t pts, int64_t user_data);
+EDGE264MVC_API int edge264mvc_send_nal(Edge264MvcDecoder *decoder, const uint8_t *nal, size_t size, int64_t pts, int64_t user_data);
 
 /**
  * Signals the end of the stream: edge264mvc_receive_frame returns every frame
  * still held, then EDGE264MVC_END. Sending a NAL afterwards starts a new
  * stream. Returns EDGE264MVC_OK or EDGE264MVC_INVALID.
  */
-int edge264mvc_send_end(Edge264MvcDecoder *decoder);
+EDGE264MVC_API int edge264mvc_send_end(Edge264MvcDecoder *decoder);
 
 /**
  * Returns the next frame in display order. Returns EDGE264MVC_OK,
@@ -198,27 +208,27 @@ int edge264mvc_send_end(Edge264MvcDecoder *decoder);
  * edge264mvc_send_end, this waits for the worker threads to finish the frames
  * that are due instead of returning EDGE264MVC_AGAIN at once.
  */
-int edge264mvc_receive_frame(Edge264MvcDecoder *decoder, Edge264MvcFrame *frame);
+EDGE264MVC_API int edge264mvc_receive_frame(Edge264MvcDecoder *decoder, Edge264MvcFrame *frame);
 
 /**
  * Gives a received frame back to the decoder, which may then reuse its memory.
  * Every received frame must be released, and frames held by the caller limit
  * how far the decoder can run ahead.
  */
-void edge264mvc_release_frame(Edge264MvcDecoder *decoder, const Edge264MvcFrame *frame);
+EDGE264MVC_API void edge264mvc_release_frame(Edge264MvcDecoder *decoder, const Edge264MvcFrame *frame);
 
 /**
  * Discards every picture and the decoding state, e.g. to seek. Decoding
  * resumes at the next IDR picture or recovery point. Frames already received
  * stay valid until released.
  */
-void edge264mvc_flush(Edge264MvcDecoder *decoder);
+EDGE264MVC_API void edge264mvc_flush(Edge264MvcDecoder *decoder);
 
 /**
  * Returns the offset of the first 00 00 01 start code in buf[0..size), or size
  * if there is none. Reads only inside the buffer.
  */
-size_t edge264mvc_find_start_code(const uint8_t *buf, size_t size);
+EDGE264MVC_API size_t edge264mvc_find_start_code(const uint8_t *buf, size_t size);
 
 #ifdef __cplusplus
 }

@@ -2,7 +2,6 @@
  * _ receiving a different SPS should reset SSPS
  * _ Replace P and INIT_P with PX versions
  * _ try to optimize shld with extr on ARM when shift is constant
- * _ add support for https://gcc.gnu.org/wiki/Visibility ?
  * _ swap numbers and text in header logging (ex: 7 (Sequence Parameter Set)) to facilitate automated extraction
  * _ Try to replace errno_on_fail with a mechanism to manage alloc'ed frames with 2 parameters preferred_num_frames and max_num_frames?
  * _ Try to reuse Raylib's bindings generation tool
