@@ -388,7 +388,7 @@ uninstall:
 # ==============================================================================
 .PHONY: clean clear
 clean clear:
-	$(Q)rm -f edge264mvc_test edge264mvc_test.exe edge264mvc_test.js edge264mvc_test.wasm edge264mvc_check edge264mvc_check.exe edge264mvc_check.js edge264mvc_check.wasm conformance_check conformance_check.exe liveness_check liveness_check.exe asan_check asan_check.exe fuzz_decode edge264*.o libedge264mvc.a edge264mvc.$(MAJOR).dll edge264mvc.js edge264mvc.wasm libedge264mvc.$(MAJOR).dylib libedge264mvc-universal.$(MAJOR).dylib libedge264mvc.so libedge264mvc.so.$(MAJOR)
+	$(Q)rm -f edge264mvc_test edge264mvc_test.exe edge264mvc_test.js edge264mvc_test.wasm edge264mvc_check edge264mvc_check.exe edge264mvc_check.js edge264mvc_check.wasm conformance_check conformance_check.exe liveness_check liveness_check.exe asan_check asan_check.exe api_check api_check.exe fuzz_decode edge264*.o libedge264mvc.a edge264mvc.$(MAJOR).dll edge264mvc.js edge264mvc.wasm libedge264mvc.$(MAJOR).dylib libedge264mvc-universal.$(MAJOR).dylib libedge264mvc.so libedge264mvc.so.$(MAJOR)
 
 
 # ==============================================================================
@@ -412,6 +412,7 @@ else
 	$(Q)$(MAKE) --no-print-directory check-stream-input
 	$(Q)$(MAKE) --no-print-directory check-edge264mvc-test-liveness
 	$(Q)$(MAKE) --no-print-directory check-robustness
+	$(Q)$(MAKE) --no-print-directory check-api
 endif
 
 edge264mvc_check$(EXE): src/edge264mvc_check.c edge264mvc.h src/edge264mvc_internal.h $(LIBNAME)
@@ -495,6 +496,16 @@ endif
 # a wall-clock bound for the harnesses that guard hangs, where the system has
 # timeout (GNU coreutils; macOS has none by default, so it runs unbounded there)
 TIMEOUT := $(if $(shell command -v timeout 2>/dev/null),timeout 90)
+
+# The promises of the public API itself (version, defaults, INVALID results,
+# END after send_end, a flush after the end, pts / user_data passthrough), on
+# one MVC and one 2D stream, single-threaded and with four worker threads.
+.PHONY: check-api
+check-api: api_check$(EXE)
+	$(Q)$(TIMEOUT) ./api_check$(EXE) tests/conformance/mvc/MVCDS-5.264 tests/conformance/2d/CABA3_Sony_C.264
+
+api_check$(EXE): tests/api_check.c edge264mvc.h $(LIBNAME)
+	$(Q)$(CCLD) -I. tests/api_check.c $(CPPFLAGS) $(CFLAGS) $(EXEFLAGS) -o $@
 
 # The same crafted fixtures without a sanitizer, single-threaded and with four
 # worker threads, as part of `check`: they also guard hangs, some of which need

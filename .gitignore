@@ -14,6 +14,7 @@
 !tests
 !tests/*.yaml
 !tests/*.264
+!tests/*.c
 !tests/ROADMAP.md
 !tests/gen_cabac_overread.py
 !tests/gen_cabac_orphan.py

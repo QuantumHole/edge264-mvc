@@ -247,6 +247,7 @@ The whole API is declared in [edge264mvc.h](edge264mvc.h), and the library is ca
 - **Robustness** ([`tests/asan`](tests/asan)) - crafted streams found by fuzzing, decoded single-threaded and with four threads (`make SANITIZE=address check-asan` runs them under AddressSanitizer).
 - **Multithreading** - every conformance and liveness stream is also decoded with worker threads and must give the same output as single-threaded decoding.
 - **Trace** - the conformance streams are decoded once more with the header trace on, which must not change the output.
+- **API contract** ([`tests/api_check.c`](tests/api_check.c)) - the promises of the API itself: version and defaults, the results for invalid arguments, the end of a stream, a flush after the end followed by the same stream again, and timestamps passed through to their frames.
 
 On the full set of 231 AVC, FRExt and MVC [conformance streams](https://www.itu.int/wftp3/av-arch/jvt-site/draft_conformance/), edge264-mvc decodes 113 exactly like the ITU reference decoder, 117 use features outside the supported profiles (and are reported as unsupported), and 1 differs. CI additionally runs the tests on Windows, under the sanitizers, and fuzzes the decoder with libFuzzer ([`tests/fuzz_decode.c`](tests/fuzz_decode.c), `make fuzz`).
 

@@ -47,12 +47,13 @@ jobs:
         with:
           msystem: MINGW64
           install: make mingw-w64-x86_64-gcc
-      - run: make OS=windows CFLAGS=-march=x86-64 CPPFLAGS=-DNDEBUG "LDFLAGS=-static -lwinpthread" VARIANTS=x86-64-v2,x86-64-v3,logs BUILDTEST=no conformance_check.exe liveness_check.exe asan_check.exe
+      - run: make OS=windows CFLAGS=-march=x86-64 CPPFLAGS=-DNDEBUG "LDFLAGS=-static -lwinpthread" VARIANTS=x86-64-v2,x86-64-v3,logs BUILDTEST=no conformance_check.exe liveness_check.exe asan_check.exe api_check.exe
       - run: ./conformance_check.exe run tests/conformance/manifest.txt tests/conformance
       - run: EDGE264MVC_THREADS=8 ./conformance_check.exe run tests/conformance/manifest.txt tests/conformance
       - run: EDGE264MVC_THREADS=8 ./liveness_check.exe run tests/liveness/manifest.txt tests/liveness
       - run: ./asan_check.exe run tests/asan/manifest.txt tests/asan
       - run: EDGE264MVC_THREADS=4 ./asan_check.exe run tests/asan/manifest.txt tests/asan
+      - run: ./api_check.exe tests/conformance/mvc/MVCDS-5.264 tests/conformance/2d/CABA3_Sony_C.264
   # AddressSanitizer + UndefinedBehaviorSanitizer over the whole test suite,
   # then ThreadSanitizer over the multithreaded passes. setarch -R: the
   # sanitizers' shadow memory does not fit the runner's ASLR layout otherwise.
