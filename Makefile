@@ -229,12 +229,15 @@ override CFLAGS := $(_BASE_ARCH) -std=gnu11 -O3 -flax-vector-conversions -Wno-ov
 # ---- Object file flags -------------------------------------------------------
 # -fPIC is required for shared libraries on ELF targets.
 # Not needed for static builds, Windows DLLs, or WASM.
-ifeq ($(STATIC),no)
-  _PIC_FLAG := $(if $(findstring $(OS),macos linux android),-fPIC)
-endif
 # Only the edge264mvc_* API leaves the shared library: everything else is
 # hidden, so internal names cannot clash with other libraries in a process.
-override OBJFLAGS := $(_PIC_FLAG) -fvisibility=hidden -DEDGE264MVC_BUILD $(OBJFLAGS)
+# The static library marks nothing for export, so a library or DLL that links
+# it in does not export the decoder API itself.
+ifeq ($(STATIC),no)
+  _PIC_FLAG := $(if $(findstring $(OS),macos linux android),-fPIC)
+  _EXPORT_FLAG := -DEDGE264MVC_BUILD
+endif
+override OBJFLAGS := $(_PIC_FLAG) -fvisibility=hidden $(_EXPORT_FLAG) $(OBJFLAGS)
 
 # ---- Common linker flags -----------------------------------------------------
 ifeq ($(OS),wasm)
@@ -399,7 +402,7 @@ uninstall:
 # ==============================================================================
 .PHONY: clean clear
 clean clear:
-	$(Q)rm -f edge264mvc_test edge264mvc_test.exe edge264mvc_test.js edge264mvc_test.wasm edge264mvc_check edge264mvc_check.exe edge264mvc_check.js edge264mvc_check.wasm conformance_check conformance_check.exe liveness_check liveness_check.exe asan_check asan_check.exe api_check api_check.exe multi_decoder_check multi_decoder_check.exe fuzz_decode edge264*.o libedge264mvc.a edge264mvc.$(MAJOR).dll libedge264mvc.dll.a edge264mvc.js edge264mvc.wasm libedge264mvc.$(MAJOR).dylib libedge264mvc-universal.$(MAJOR).dylib libedge264mvc.so libedge264mvc.so.$(MAJOR)
+	$(Q)rm -f edge264mvc_test edge264mvc_test.exe edge264mvc_test.js edge264mvc_test.wasm edge264mvc_check edge264mvc_check.exe edge264mvc_check.js edge264mvc_check.wasm conformance_check conformance_check.exe liveness_check liveness_check.exe asan_check asan_check.exe api_check api_check.exe multi_decoder_check multi_decoder_check.exe static_plugin.so static_plugin.dll fuzz_decode edge264*.o libedge264mvc.a edge264mvc.$(MAJOR).dll libedge264mvc.dll.a edge264mvc.js edge264mvc.wasm libedge264mvc.$(MAJOR).dylib libedge264mvc-universal.$(MAJOR).dylib libedge264mvc.so libedge264mvc.so.$(MAJOR)
 
 
 # ==============================================================================
