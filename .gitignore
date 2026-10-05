@@ -52,6 +52,7 @@
 !tests/gen_mvc_requeue_dependent.py
 !tests/gen_long_term_overflow.py
 !tests/gen_idr_after_long_term.py
+!tests/gen_cavlc_ac_overflow.py
 !tests/conformance_check.c
 !tests/conformance
 !tests/conformance/2d

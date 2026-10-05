@@ -386,6 +386,14 @@ static void initialize_context(Edge264MvcContext *ctx, int currPic)
 		ctx->last_inc_v[i] = last_inc_8x8[i];
 		ctx->scan_v[i] = scan_8x8_cabac[0][i];
 	}
+	// CAVLC reads only scan[0..15], except on a damaged AC block of 15
+	// coefficients that places one past its scan (coeff_token and total_zeros
+	// allow 16 coefficients and 16 - TotalCoeff zeros, 9.2.1 and 9.2.3). As with
+	// FFmpeg's 17-entry scan, it then lands on the block's own DC position, which
+	// add_idct4x4 replaces with the DC, instead of on a coefficient of a later 8x8
+	// block of the slice.
+	if (!ctx->t.pps.entropy_coding_mode_flag)
+		ctx->scan[16] = 0;
 	for (int i = 0; i < 16; i++)
 		ctx->c_v[i] = (i8x16){};
 	

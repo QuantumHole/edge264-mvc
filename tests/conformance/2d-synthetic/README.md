@@ -154,3 +154,9 @@ Without the fix this line FAILs.
 Guards the frame_num of an IDR picture. A 32x32 stream allowing one reference picture whose references are all long-term: an IDR picture marked long-term, then two reference P pictures that mark themselves long-term with MMCO 6, followed by a second IDR picture and a P picture of skipped macroblocks predicting from it (`tests/gen_idr_after_long_term.py`). PrevRefFrameNum is 0 for an IDR picture (7.4.3), but the decoder counted the IDR picture's frame_num on from the previous reference picture, so it saw a frame_num gap (8.2.5.2) before it; with every reference slot long-term there was no room for the frames inferred for the gap, and the IDR picture and the P picture after it were rejected as corrupt. The hash is anchored to the JM reference decoder, which FFmpeg matches.
 
 Without the fix this line FAILs.
+
+## `cavlc_ac_overflow.264`
+
+Guards where a damaged CAVLC AC block puts a coefficient that lies past its scan. A 32x16 High profile IDR picture of two macroblocks (`tests/gen_cavlc_ac_overflow.py`): an Intra_16x16 macroblock whose first luma AC block, of 15 coefficients, codes one coefficient with total_zeros 15 - a value the table only allows for blocks of 16 coefficients (9.2.3) - and an Intra_8x8 macroblock with a coded 8x8 block without coefficients. The coefficient one past the scan used to be stored outside the 4x4 block, where the next 8x8 block of the slice picked it up, so the intact macroblock beside the damaged one got a pattern it does not code. As with FFmpeg's scan tables, it now lands on the block's own DC position, which the DC of the Intra_16x16 macroblock replaces; the same holds for chroma AC blocks and for an AC block whose coeff_token claims 16 coefficients. The hash is anchored to FFmpeg. The JM reference decoder keeps the coefficient in place of the block's DC instead.
+
+Without the fix this line FAILs.

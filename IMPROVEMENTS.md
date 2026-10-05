@@ -58,6 +58,7 @@ Crashes, hangs, wrong output and decode failures found by decoding a large varie
 | Fix | Failure mode it removes |
 |---|---|
 | Floor `max_num_ref_frames` at 1 so a reference IDR fits the DPB | reference IDR didn't fit the DPB (C.4.5 fullness assert) |
+| Keep a CAVLC AC coefficient that a damaged block places past its scan inside that block, as FFmpeg does | a damaged Intra_16x16 or chroma AC block whose total_zeros or coeff_token claims one position more than the block has stored the coefficient outside the block, where a later 8x8 block of the slice added it to an intact macroblock |
 | Discard one reference when the marking of a picture leaves more than `max_num_ref_frames`, as FFmpeg does (`parse_dec_ref_pic_marking`) | on a damaged stream whose long-term references filled the reference set, which the sliding window does not retire, the next reference picture left one reference more than the stream declared, which aborted builds with assertions enabled |
 | Floor derived `max_dec_frame_buffering` at the reference count | a resolution-exceeds-signaled-level stream aborted a C.4.5 assert |
 | Keep the signaled `max_num_ref_frames` on an over-level stream (bound by DPB capacity, not the level) | a frame-exceeds-signaled-level stream clamped its reference set below the count its own slices use - silently wrong inter prediction (single-thread) and a nondeterministic multithreaded decode |
