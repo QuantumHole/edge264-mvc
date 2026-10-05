@@ -276,6 +276,27 @@ def check_invalid_annexb(exe: Path, fixture: Path, timeout: float) -> None:
     print(f"PASS {fixture.name}: damaged Annex B byte streams fail as files and on stdin")
 
 
+def check_sbs_unpaired(exe: Path, timeout: float) -> None:
+    # With -O, an MVC stream whose base view lost its dependent view in places
+    # must still be a Y4M stream of whole side-by-side frames of the header's size.
+    for fixture, frames in ((Path("tests/liveness/mvc_unpaired_base.264"), 9),
+                            (Path("tests/liveness/mvc_unpaired_base_eos.264"), 9)):
+        label = f"{fixture.name} -O unpaired base"
+        data = run_capture(edge264mvc_argv(exe, str(fixture.resolve()), "-O", ("-s",)), None, timeout, label)
+        newline = data.find(b"\n")
+        fields = {part[:1]: part[1:] for part in data[:newline].split()[1:]}
+        frame_size = int(fields[b"W"]) * int(fields[b"H"]) * 3 // 2
+        offset, count = newline + 1, 0
+        while offset < len(data):
+            if data[offset:offset + 6] != b"FRAME\n" or offset + 6 + frame_size > len(data):
+                raise RuntimeError(f"{label}: frame {count} is not a whole frame of the header's size")
+            offset += 6 + frame_size
+            count += 1
+        if count != frames:
+            raise RuntimeError(f"{label}: {count} frames, expected {frames}")
+        print(f"PASS {label}: {count} whole side-by-side frames")
+
+
 def first_vcl_offset(data: bytes) -> int:
     # Offset of the first VCL or prefix NAL start code (types 1, 5, 14, 20), i.e.
     # just past the leading parameter sets - a legal spot to splice filler in.
@@ -361,6 +382,7 @@ def main() -> int:
     have_fifo = hasattr(os, "mkfifo")
     check_empty_nal(exe, EMPTY_NAL_FIXTURE.path.resolve(), args.timeout)
     check_invalid_annexb(exe, EMPTY_NAL_FIXTURE.path.resolve(), args.timeout)
+    check_sbs_unpaired(exe, args.timeout)
     for fixture_spec in FIXTURES:
         fixture = fixture_spec.path.resolve()
         data = fixture.read_bytes()

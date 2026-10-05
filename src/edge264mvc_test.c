@@ -144,6 +144,7 @@ static unsigned skipped_corrupt = 0;
 static unsigned long frames_out = 0; // frames delivered so far (per file), to locate a skipped NAL
 static int dump = 0; // 0 off, 1 base view, 2 side-by-side (base|dependent)
 static int y4m_started = 0; // whether the Y4M stream header was written (per file)
+static int y4m_sbs = 0; // whether that header declared side-by-side frames (-O)
 static FILE *msg; // human-readable output: stdout normally, stderr while dumping YUV to stdout
 static const char *moveup = "";
 FILE *trace_file = NULL;
@@ -276,24 +277,29 @@ static void write_plane_sbs(const uint8_t *l, const uint8_t *r, int stride, int 
 }
 static void dump_frame(void)
 {
-	int sbs = dump == 2 && out.views[1].planes[0] != NULL;
 	if (!y4m_started) {
 		// frame rate from the SPS VUI (time_scale / 2 / num_units_in_tick for a
 		// progressive frame); fall back to 24000/1001 when the stream omits it
 		// (Y4M requires a rate - override downstream with ffmpeg -r if wrong).
 		uint32_t ts = d->sps.time_scale, nu = d->sps.num_units_in_tick;
-		int have = ts != 0 && nu != 0 && nu < 0x40000000u; // guard 2*nu against int overflow
+		int have = ts != 0 && ts <= INT_MAX && nu != 0 && nu < 0x40000000u; // both fit an int, 2*nu too
 		int fnum = have ? (int)ts : 24000;
 		int fden = have ? (int)(2 * nu) : 1001;
+		// a Y4M stream keeps the frame size of its header, so side by side is
+		// decided once, by the first frame
+		y4m_sbs = dump == 2 && out.views[1].planes[0] != NULL;
 		fprintf(stdout, "YUV4MPEG2 W%d H%d F%d:%d Ip A1:1 C420mpeg2\n",
-			out.width_Y << sbs, out.height_Y, fnum, fden);
+			out.width_Y << y4m_sbs, out.height_Y, fnum, fden);
 		y4m_started = 1;
 	}
 	fputs("FRAME\n", stdout);
-	if (sbs) {
-		write_plane_sbs(out.views[0].planes[0], out.views[1].planes[0], out.stride_Y, out.width_Y, out.height_Y);
-		write_plane_sbs(out.views[0].planes[1], out.views[1].planes[1], out.stride_C, out.width_C, out.height_C);
-		write_plane_sbs(out.views[0].planes[2], out.views[1].planes[2], out.stride_C, out.width_C, out.height_C);
+	if (y4m_sbs) {
+		// a frame without its dependent view (damaged or truncated MVC input)
+		// shows its base view on both sides, rather than breaking the frame size
+		const Edge264MvcView *right = &out.views[out.views[1].planes[0] != NULL];
+		write_plane_sbs(out.views[0].planes[0], right->planes[0], out.stride_Y, out.width_Y, out.height_Y);
+		write_plane_sbs(out.views[0].planes[1], right->planes[1], out.stride_C, out.width_C, out.height_C);
+		write_plane_sbs(out.views[0].planes[2], right->planes[2], out.stride_C, out.width_C, out.height_C);
 	} else {
 		write_plane(out.views[0].planes[0], out.stride_Y, out.width_Y, out.height_Y);
 		write_plane(out.views[0].planes[1], out.stride_C, out.width_C, out.height_C);
