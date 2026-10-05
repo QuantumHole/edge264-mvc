@@ -1235,19 +1235,21 @@ static int parse_ref_pic_list_modification(Edge264MvcDecoder *dec, Edge264MvcSeq
 		unsigned refs = (t->slice_type != 0 && sps->pic_order_cnt_type == 0) ?
 			dec->short_term_frames ^ dec->long_term_frames :
 			dec->short_term_frames | dec->long_term_frames;
+		// sort key = class (0 before, 1 after, 2 long-term) above the distance, in
+		// 64 bits since a damaged stream can put references up to 2^32 away
 		for (unsigned next = 0; refs; refs ^= 1u << next) {
-			int best = INT_MAX;
+			int64_t best = INT64_MAX;
 			for (unsigned r = refs; r; r &= r - 1) {
 				int i = __builtin_ctz(r);
-				int diff = values[i] - pic_value;
-				int ShortTermNum = (diff <= 0) ? -diff : 0x10000 + diff;
-				int LongTermNum = dec->prev_LongTermFrameIdx[i] + 0x20000;
-				int v = (dec->short_term_frames & 1u << i) ? ShortTermNum : LongTermNum;
+				int64_t diff = (int64_t)values[i] - pic_value;
+				int64_t ShortTermNum = (diff <= 0) ? -diff : (1ll << 32) + diff;
+				int64_t LongTermNum = dec->prev_LongTermFrameIdx[i] + (2ll << 32);
+				int64_t v = (dec->short_term_frames & 1u << i) ? ShortTermNum : LongTermNum;
 				if (v < best)
 					best = v, next = i;
 			}
 			t->RefPicList[0][size++] = next;
-			count[best >> 16]++;
+			count[best >> 32]++;
 		}
 	}
 	// fill RefPicListL1 by swapping before/after references
