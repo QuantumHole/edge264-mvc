@@ -402,7 +402,7 @@ uninstall:
 # ==============================================================================
 .PHONY: clean clear
 clean clear:
-	$(Q)rm -f edge264mvc_test edge264mvc_test.exe edge264mvc_test.js edge264mvc_test.wasm edge264mvc_check edge264mvc_check.exe edge264mvc_check.js edge264mvc_check.wasm conformance_check conformance_check.exe liveness_check liveness_check.exe asan_check asan_check.exe api_check api_check.exe multi_decoder_check multi_decoder_check.exe slice_overrun_check slice_overrun_check.exe open_failure_check open_failure_check.exe partial_receive_check partial_receive_check.exe static_plugin.so static_plugin.dll fuzz_decode edge264*.o libedge264mvc.a edge264mvc.$(MAJOR).dll libedge264mvc.dll.a edge264mvc.js edge264mvc.wasm libedge264mvc.$(MAJOR).dylib libedge264mvc-universal.$(MAJOR).dylib libedge264mvc.so libedge264mvc.so.$(MAJOR)
+	$(Q)rm -f edge264mvc_test edge264mvc_test.exe edge264mvc_test.js edge264mvc_test.wasm edge264mvc_check edge264mvc_check.exe edge264mvc_check.js edge264mvc_check.wasm conformance_check conformance_check.exe liveness_check liveness_check.exe asan_check asan_check.exe api_check api_check.exe multi_decoder_check multi_decoder_check.exe slice_overrun_check slice_overrun_check.exe open_failure_check open_failure_check.exe alloc_failure_check alloc_failure_check.exe partial_receive_check partial_receive_check.exe static_plugin.so static_plugin.dll fuzz_decode edge264*.o libedge264mvc.a edge264mvc.$(MAJOR).dll libedge264mvc.dll.a edge264mvc.js edge264mvc.wasm libedge264mvc.$(MAJOR).dylib libedge264mvc-universal.$(MAJOR).dylib libedge264mvc.so libedge264mvc.so.$(MAJOR)
 
 
 # ==============================================================================
@@ -431,6 +431,7 @@ else
 	$(Q)$(MAKE) --no-print-directory check-multi-decoder
 	$(Q)$(MAKE) --no-print-directory check-slice-overrun
 	$(Q)$(MAKE) --no-print-directory check-open-failure
+	$(Q)$(MAKE) --no-print-directory check-alloc-failure
 	$(Q)$(MAKE) --no-print-directory check-partial-receive
 endif
 
@@ -568,6 +569,20 @@ endif
 
 open_failure_check: tests/open_failure_check.c edge264mvc.h $(LIBNAME)
 	$(Q)$(CCLD) -I. tests/open_failure_check.c $(CPPFLAGS) $(CFLAGS) $(EXEFLAGS) -ldl -o $@
+
+# Decoding when the memory for a new picture cannot be allocated (see
+# tests/alloc_failure_check.c), single-threaded and with four worker threads.
+# It interposes aligned_alloc, hence Linux only.
+.PHONY: check-alloc-failure
+check-alloc-failure:
+ifeq ($(OS),linux)
+	$(Q)$(MAKE) --no-print-directory alloc_failure_check
+	$(Q)$(TIMEOUT) ./alloc_failure_check tests/conformance/mvc/MVCDS-5.264
+	$(Q)EDGE264MVC_THREADS=4 $(TIMEOUT) ./alloc_failure_check tests/conformance/mvc/MVCDS-5.264
+endif
+
+alloc_failure_check: tests/alloc_failure_check.c edge264mvc.h $(LIBNAME)
+	$(Q)$(CCLD) -I. tests/alloc_failure_check.c $(CPPFLAGS) $(CFLAGS) $(EXEFLAGS) -ldl -o $@
 
 # A caller receiving one frame per round and holding up to a few frames, on a
 # damaged MVC stream that fills the DPB (see tests/partial_receive_check.c),

@@ -54,7 +54,7 @@
 
 // Internal decoder types, formerly the public API of edge264
 typedef void (*Edge264MvcUnrefCb)(int ret, void *unref_arg);
-typedef void (*Edge264MvcAllocCb)(void **samples, unsigned samples_size, void **mbs, unsigned mbs_size, int errno_on_fail, void *alloc_arg);
+typedef void (*Edge264MvcAllocCb)(void **samples, unsigned samples_size, void **mbs, unsigned mbs_size, void *alloc_arg);
 typedef void (*Edge264MvcFreeCb)(void *samples, void *mbs, void *alloc_arg);
 typedef struct Edge264MvcOutput {
 	const uint8_t *samples[3]; // Y/Cb/Cr planes

@@ -3,7 +3,6 @@
  * _ Replace P and INIT_P with PX versions
  * _ try to optimize shld with extr on ARM when shift is constant
  * _ swap numbers and text in header logging (ex: 7 (Sequence Parameter Set)) to facilitate automated extraction
- * _ Try to replace errno_on_fail with a mechanism to manage alloc'ed frames with 2 parameters preferred_num_frames and max_num_frames?
  * _ Try to reuse Raylib's bindings generation tool
  * _ Plugins
  * 	_ Read https://tldp.org/HOWTO/Program-Library-HOWTO/shared-libraries.html
@@ -108,7 +107,7 @@
 
 
 
-static void internal_alloc(void **samples, unsigned samples_size, void **mbs, unsigned mbs_size, int errno_on_fail, void *alloc_arg) {
+static void internal_alloc(void **samples, unsigned samples_size, void **mbs, unsigned mbs_size, void *alloc_arg) {
 	size_t size = (size_t)samples_size + mbs_size;
 	#if defined(__linux__) && defined(MADV_HUGEPAGE)
 		// reason: motion compensation reads up to 21 rows of a reference picture

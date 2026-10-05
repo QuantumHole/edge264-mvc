@@ -258,7 +258,9 @@ static void flush_frames(Edge264MvcDecoder *dec) {
 		progress_or_wait(dec);
 }
 
-static int alloc_frame(Edge264MvcDecoder *dec, int id, int errno_on_fail) {
+// Returns ENOMEM if the memory could not be allocated, which no number of
+// frames received would change (AGAIN would promise that).
+static int alloc_frame(Edge264MvcDecoder *dec, int id) {
 	int mbs = (dec->sps.pic_width_in_mbs + 1) * dec->sps.pic_height_in_mbs - 1;
 	// The neighbours of the top row (B, C, D, up to pic_width_in_mbs + 2
 	// macroblocks back) are read before their availability masks them out, so
@@ -268,7 +270,7 @@ static int alloc_frame(Edge264MvcDecoder *dec, int id, int errno_on_fail) {
 	int guard = dec->sps.pic_width_in_mbs + 2;
 	unsigned samples_size = (dec->plane_size_Y + dec->plane_size_C + 16 + 63) & -64; // plus margin for overreads, and cache line alignment of mbs
 	unsigned mbs_size = sizeof(Edge264MvcMacroblock) * (guard + mbs);
-	dec->alloc_cb((void **)&dec->samples_buffers[id], samples_size, (void **)&dec->mb_buffers[id], mbs_size, errno_on_fail, dec->alloc_arg);
+	dec->alloc_cb((void **)&dec->samples_buffers[id], samples_size, (void **)&dec->mb_buffers[id], mbs_size, dec->alloc_arg);
 	Edge264MvcMacroblock *m = dec->mb_buffers[id];
 	if (dec->samples_buffers[id] && m) {
 		for (int i = 0; i < guard; i++)
@@ -285,7 +287,7 @@ static int alloc_frame(Edge264MvcDecoder *dec, int id, int errno_on_fail) {
 		dec->free_cb(dec->samples_buffers[id], m, dec->alloc_arg);
 		dec->samples_buffers[id] = NULL;
 		dec->mb_buffers[id] = NULL;
-		return errno_on_fail;
+		return ENOMEM;
 	}
 }
 
@@ -2148,7 +2150,7 @@ int ADD_VARIANT(parse_slice_layer_without_partitioning)(Edge264MvcDecoder *dec, 
 		for (unsigned FrameNum = dec->FrameNum - non_existing; FrameNum < dec->FrameNum; FrameNum++) {
 			int i = __builtin_ctz(~unavail);
 			if (dec->samples_buffers[i] == NULL &&
-				(ret = alloc_frame(dec, i, i <= sps->max_dec_frame_buffering ? ENOMEM : ENOBUFS)))
+				(ret = alloc_frame(dec, i)))
 				return ret;
 			unavail |= 1u << i;
 			dec->prev_short_term_frames |= 1u << i;
@@ -2227,7 +2229,7 @@ int ADD_VARIANT(parse_slice_layer_without_partitioning)(Edge264MvcDecoder *dec, 
 			progress_or_wait(dec);
 		int currPic = __builtin_ctz(~unavail);
 		if (dec->samples_buffers[currPic] == NULL &&
-			(ret = alloc_frame(dec, currPic, currPic <= sps->max_dec_frame_buffering ? ENOMEM : ENOBUFS)))
+			(ret = alloc_frame(dec, currPic)))
 			return ret;
 		dec->currPic = currPic;
 		dec->frame_flags[currPic] = dec->IdrPicFlag ? EDGE264MVC_VIEW_IDR : 0;
