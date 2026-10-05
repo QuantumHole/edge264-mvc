@@ -183,6 +183,7 @@ static Edge264MvcMacroblock unavail_mb = {
 	.f.mb_type_I_NxN = 1,
 	.f.mb_type_B_Direct = 1,
 	.refIdx = {-1, -1, -1, -1, -1, -1, -1, -1},
+	.refPic = {-1, -1, -1, -1, -1, -1, -1, -1}, // like an intra macroblock, so no slot is taken for its reference
 	.bits[0] = 0xac, // cbp
 };
 
