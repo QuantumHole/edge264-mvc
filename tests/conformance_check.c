@@ -120,9 +120,10 @@ static void account_frame(Result *r, const Edge264MvcFrame *f, int64_t *prev_dis
 // which the MVC view-pairing shortcut used to drop the IDR's dependent view.
 // Both models must yield identical output from a correct decoder.
 enum { STALL_ROUNDS = 4096 };
-static volatile size_t trace_bytes;
+static size_t trace_bytes;
 static void discard_line(const char *line, void *arg) {
-	trace_bytes += strlen(line);
+	// worker threads call this at the same time
+	__atomic_fetch_add(&trace_bytes, strlen(line), __ATOMIC_RELAXED);
 }
 
 static Result decode_all(const uint8_t *buf, size_t size, int paced) {

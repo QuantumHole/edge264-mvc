@@ -78,6 +78,8 @@ jobs:
       - run: make clean
       - run: make CC=clang SANITIZE=thread CFLAGS="-march=x86-64 -g" BUILDTEST=no conformance_check liveness_check asan_check multi_decoder_check slice_overrun_check open_failure_check
       - run: EDGE264MVC_THREADS=8 setarch -R ./conformance_check run tests/conformance/manifest.txt tests/conformance
+      # the header trace written from the worker threads
+      - run: EDGE264MVC_TRACE=1 EDGE264MVC_THREADS=8 setarch -R ./conformance_check run tests/conformance/manifest.txt tests/conformance
       - run: EDGE264MVC_THREADS=8 setarch -R ./liveness_check run tests/liveness/manifest.txt tests/liveness
       - run: EDGE264MVC_THREADS=4 setarch -R ./asan_check run tests/asan/manifest.txt tests/asan
       - run: setarch -R ./multi_decoder_check tests/conformance/mvc/MVCDS-5.264 9 tests/conformance/2d/CABA3_Sony_C.264 300
