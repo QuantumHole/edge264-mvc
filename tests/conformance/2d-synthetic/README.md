@@ -132,3 +132,9 @@ Without the fix this line FAILs.
 ## `crop_top_left.264`
 
 Three 64x48 IDR pictures of I_PCM macroblocks with sample gradients, cropped by 8 samples on every side to 48x32 (`tests/gen_crop_top_left.py`), so that the macroblocks along every edge lie partly outside the output picture. Here it pins the cropped output, anchored to FFmpeg's decode; `tests/edge264mvc_test_yuv_check.py` also uses it to check that `edge264mvc_test` reports a differing sample at each corner of the picture. Printing such an edge macroblock used to read the reference YUV outside the picture, before its start for the top rows, so `edge264mvc_test` crashed on a difference in the first frame instead of reporting it; it now prints the cropped-off samples as blanks without reading them.
+
+## `cavlc8x8_deblock.264`
+
+Guards the boundary strength of edges next to a CAVLC macroblock with an 8x8 transform in a slice without deblocking. A flat 32x32 IDR picture of I_PCM macroblocks, then three High profile CAVLC P pictures of two slices each (`tests/gen_cavlc8x8_deblock.py`): the first macroblock row with `disable_deblocking_filter_idc` 1, holding an inter macroblock with an 8x8 transform whose bottom-left 8x8 block carries only a DC coefficient, the second row with idc 0 and skipped macroblocks. CAVLC codes the 8x8 block as four interleaved 4x4 blocks, and the DC lands in the first of them, not in its bottom row; 8.7.2.1 still filters the edge below the 8x8 block with boundary strength 2, as the block has a coefficient. The decoder used to turn the per-4x4 counts into per-8x8 flags only when deblocking a macroblock, so the neighbour in the slice without deblocking kept its per-4x4 counts and the edge was filtered with strength 0; the flags are now recorded when the macroblock is parsed. The hash is anchored to the JM reference decoder, which FFmpeg matches.
+
+Without the fix this line FAILs.

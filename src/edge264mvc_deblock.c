@@ -1096,11 +1096,9 @@ static noinline void deblock_mb(Edge264MvcContext *ctx)
 		i8x16 bS0aacc = ziplo32(bS0aceg, bS0aceg);
 		i8x16 bS0eegg = ziphi32(bS0aceg, bS0aceg);
 		
-		// for 8x8 blocks with CAVLC, broadcast transform tokens beforehand
+		// (for 8x8 blocks with CAVLC, nC_Y_v tells which 8x8 blocks have
+		// coefficients, see parse_slice_data)
 		i8x16 nC = mb->nC_Y_v;
-		if (!ctx->t.pps.entropy_coding_mode_flag && mb->f.transform_size_8x8_flag) {
-			mb->nC_Y_v = nC = (i8x16)((i32x4)nC == 0) - -1;
-		}
 		
 		// compute masks for edges with bS=2
 		static const i8x16 shufV = {0, 2, 8, 10, 1, 3, 9, 11, 4, 6, 12, 14, 5, 7, 13, 15};

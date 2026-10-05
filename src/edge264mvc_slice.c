@@ -1823,6 +1823,13 @@ static noinline void CAFUNC(parse_slice_data)
 		#endif
 		print_mb(ctx);
 		mb->nC_Y_v = mbc->nC_v[0];
+		#if !CABAC
+			// CAVLC codes an 8x8 block as four interleaved 4x4 ones, whereas
+			// deblocking (8.7.2.1) asks whether the 8x8 block has coefficients, also
+			// for the neighbours of a later macroblock in a slice not deblocked
+			if (mb->f.transform_size_8x8_flag)
+				mb->nC_Y_v = (i8x16)((i32x4)mb->nC_Y_v == 0) - -1;
+		#endif
 		advance_mbc(ctx);
 		
 		// deblock mbB while in cache, then point to the next macroblock

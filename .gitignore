@@ -47,6 +47,7 @@
 !tests/gen_weighted_denom7.py
 !tests/gen_crop_top_left.py
 !tests/gen_subset_sps_truncated.py
+!tests/gen_cavlc8x8_deblock.py
 !tests/conformance_check.c
 !tests/conformance
 !tests/conformance/2d
