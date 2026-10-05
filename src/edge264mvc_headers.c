@@ -512,7 +512,7 @@ static void recover_slice(Edge264MvcContext *ctx, int currPic, int keep_mb) {
 			#elif SIMD == NEON
 				i16x8 w0 = (p128 < 128) ? (i16x8){128 - p128, p128} : (i16x8){0, 1};
 				i16x8 w1 = w0;
-				i16x8 wd = set16(p128 < 128 ? 7 : 0);
+				i16x8 wd = set16(p128 < 128 ? -7 : 0); // vshlq_s16 shifts right by a negative count
 			#elif SIMD == WASM
 				i16x8 w0 = set16(p128 < 128 ? 128 - p128 : 0);
 				i16x8 w1 = set16(p128 < 128 ? p128 : 1);
