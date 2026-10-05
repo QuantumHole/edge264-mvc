@@ -2142,6 +2142,23 @@ int ADD_VARIANT(parse_slice_layer_without_partitioning)(Edge264MvcDecoder *dec, 
 	log_dec(dec, "  frame_num: {bits: %u, absolute: %u}\n",
 		sps->log2_max_frame_num, dec->FrameNum);
 	
+	// An SPS may lower max_num_ref_frames without an IDR picture (a damaged
+	// stream, 7.4.1.2.1), which leaves more references than it allows: drop the
+	// oldest ones, as the sliding window would (8.2.5.3), and long-term ones only
+	// when no short-term one is left.
+	while (__builtin_popcount((dec->prev_short_term_frames | dec->prev_long_term_frames) & same_views) > sps->max_num_ref_frames) {
+		unsigned shorts = dec->prev_short_term_frames & same_views;
+		int unref = -1, lowest = INT_MAX;
+		for (unsigned r = shorts ? shorts : dec->prev_long_term_frames & same_views; r; r &= r - 1) {
+			int i = __builtin_ctz(r);
+			int key = shorts ? dec->FrameNums[i] : dec->prev_LongTermFrameIdx[i];
+			if (key < lowest)
+				lowest = key, unref = i;
+		}
+		dec->prev_short_term_frames &= ~(1u << unref);
+		dec->prev_long_term_frames &= ~(1u << unref);
+	}
+	
 	// check for gaps in frame_num (8.2.5.2), which only non-IDR pictures have:
 	// an IDR picture continues at the next multiple of MaxFrameNum, and the
 	// reference pictures before it are all dropped anyway

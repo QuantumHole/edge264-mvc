@@ -57,6 +57,7 @@
 !tests/gen_implicit_weight_far_poc.py
 !tests/gen_reflist_num_overflow.py
 !tests/gen_rejected_first_slice.py
+!tests/gen_sps_fewer_refs.py
 !tests/conformance_check.c
 !tests/conformance
 !tests/conformance/2d

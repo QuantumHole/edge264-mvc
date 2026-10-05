@@ -172,3 +172,9 @@ Without the fix this line FAILs.
 Guards the picture order count distances of implicit weighted bi-prediction. A 32x32 Main profile stream with `weighted_bipred_idc` 2: an IDR picture at POC 0 and a P picture at POC 32767, both of I_PCM macroblocks with distinct samples, then a B picture of skipped macroblocks at POC 65534 (`tests/gen_implicit_weight_far_poc.py`). Its reference lists start with the P picture and the IDR picture, so 8.4.2.3.1 uses `tb` = 32767 and `td` = -32767, which 8.2.1 allows, clipped to 127 and -128. The decoder clipped each distance from the B picture to 16 bits before subtracting them, so the 65534 to the IDR picture became 32767 and `td` came out 0, which blends both references equally. The distances are now kept in 32 bits and clipped once. The hash is anchored to the JM reference decoder, which FFmpeg matches.
 
 Without the fix this line FAILs.
+
+## `sps_fewer_refs.264`
+
+Guards the reference set when an SPS lowers `max_num_ref_frames` without an IDR picture. A 32x32 stream whose SPS allows four reference pictures: an IDR picture and three reference P pictures of I_PCM samples, then the same SPS allowing one - a new SPS that 7.4.1.2.1 allows only at an IDR picture - and a non-reference and a reference P picture of skipped macroblocks (`tests/gen_sps_fewer_refs.py`). The four references of the old SPS stayed, so the next picture aborted on the C.4.5 assert on the reference count, and a release build held four references where one is allowed. The oldest references beyond the new limit are now dropped when a slice starts, as the sliding window would. The hash is anchored to the JM reference decoder, which FFmpeg matches.
+
+Without the fix this line FAILs.
