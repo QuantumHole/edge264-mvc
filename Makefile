@@ -404,7 +404,7 @@ uninstall:
 # ==============================================================================
 .PHONY: clean clear
 clean clear:
-	$(Q)rm -f edge264mvc_test edge264mvc_test.exe edge264mvc_test.js edge264mvc_test.wasm edge264mvc_check edge264mvc_check.exe edge264mvc_check.js edge264mvc_check.wasm conformance_check conformance_check.exe liveness_check liveness_check.exe asan_check asan_check.exe api_check api_check.exe multi_decoder_check multi_decoder_check.exe slice_overrun_check slice_overrun_check.exe open_failure_check open_failure_check.exe alloc_failure_check alloc_failure_check.exe partial_receive_check partial_receive_check.exe static_plugin.so static_plugin.dll fuzz_decode edge264*.o libedge264mvc.a edge264mvc.$(MAJOR).dll libedge264mvc.dll.a edge264mvc.js edge264mvc.wasm libedge264mvc.$(MAJOR).dylib libedge264mvc-universal.$(MAJOR).dylib libedge264mvc.so libedge264mvc.so.$(MAJOR)
+	$(Q)rm -f edge264mvc_test edge264mvc_test.exe edge264mvc_test.js edge264mvc_test.wasm edge264mvc_check edge264mvc_check.exe edge264mvc_check.js edge264mvc_check.wasm conformance_check conformance_check.exe liveness_check liveness_check.exe asan_check asan_check.exe api_check api_check.exe multi_decoder_check multi_decoder_check.exe slice_overrun_check slice_overrun_check.exe open_failure_check open_failure_check.exe alloc_failure_check alloc_failure_check.exe partial_receive_check partial_receive_check.exe conformance_check_stall static_plugin.so static_plugin.dll fuzz_decode edge264*.o libedge264mvc.a edge264mvc.$(MAJOR).dll libedge264mvc.dll.a edge264mvc.js edge264mvc.wasm libedge264mvc.$(MAJOR).dylib libedge264mvc-universal.$(MAJOR).dylib libedge264mvc.so libedge264mvc.so.$(MAJOR)
 
 
 # ==============================================================================
@@ -435,6 +435,7 @@ else
 	$(Q)$(MAKE) --no-print-directory check-open-failure
 	$(Q)$(MAKE) --no-print-directory check-alloc-failure
 	$(Q)$(MAKE) --no-print-directory check-partial-receive
+	$(Q)$(MAKE) --no-print-directory check-harness-stall
 endif
 
 edge264mvc_check$(EXE): src/edge264mvc_check.c edge264mvc.h src/edge264mvc_internal.h $(LIBNAME)
@@ -460,7 +461,8 @@ check-conformance-trace: conformance_check$(EXE)
 # Multithreaded bit-exactness: decode the same fixtures with background worker
 # threads and assert the per-view hashes still equal the (single-thread / ITU
 # anchored) manifest. Proves the multithreaded path is bit-identical to
-# single-thread output, and a stall would fail here by timeout. Skipped on wasm
+# single-thread output, and a stall fails here through the bound the harness
+# puts on rounds of AGAIN without a frame (check-harness-stall). Skipped on wasm
 # (single-threaded runtime). The EDGE264MVC_THREADS=-1 pass also exercises the
 # auto-detect (logical-core) spawn+teardown path: it must persist its resolved
 # count so edge264mvc_close joins every worker before freeing (a -1 left in
@@ -589,6 +591,23 @@ alloc_failure_check: tests/alloc_failure_check.c edge264mvc.h $(LIBNAME)
 # A caller receiving one frame per round and holding up to a few frames, on a
 # damaged MVC stream that fills the DPB (see tests/partial_receive_check.c),
 # single-threaded and with four worker threads.
+# conformance_check against a decoder that never makes progress
+# (tests/stall_stub.c) must fail rather than hang: on AGAIN without a frame in
+# both consumer models, and on a forked paced run that never answers, at its
+# deadline. Linux only, as the stub blocks with pause().
+.PHONY: check-harness-stall
+check-harness-stall:
+ifeq ($(OS),linux)
+	$(Q)$(CC) -I. tests/conformance_check.c tests/stall_stub.c $(CPPFLAGS) $(CFLAGS) -o conformance_check_stall
+	$(Q)out=$$($(TIMEOUT) ./conformance_check_stall run tests/conformance/manifest.txt tests/conformance); \
+	  test $$? -eq 1 && echo "$$out" | grep -q 'stall: send_nal' || { echo "harness stall check FAILED (AGAIN)"; exit 1; }
+	$(Q)grep ' 1$$' tests/conformance/manifest.txt | head -n 1 > conformance_check_stall.txt; \
+	  out=$$(STALL_STUB_BLOCK=1 CONFORMANCE_TIMEOUT=2 $(TIMEOUT) ./conformance_check_stall run conformance_check_stall.txt tests/conformance); \
+	  status=$$?; rm -f conformance_check_stall.txt; \
+	  test $$status -eq 1 && echo "$$out" | grep -q 'no result within' || { echo "harness stall check FAILED (deadlock)"; exit 1; }
+	$(Q)echo "harness stall check PASS"
+endif
+
 .PHONY: check-partial-receive
 check-partial-receive: partial_receive_check$(EXE)
 	$(Q)$(TIMEOUT) ./partial_receive_check$(EXE) tests/liveness/mvc_requeue_dependent.264 0

@@ -26,6 +26,8 @@
 #include <stdlib.h>
 #include <string.h>
 #ifndef _WIN32
+#include <poll.h>
+#include <signal.h>
 #include <sys/wait.h>
 #include <unistd.h>
 #endif
@@ -76,6 +78,7 @@ typedef struct {
 	int pair_err;   // Poc != Poc_mvc on a stereo frame
 	int order_err;  // display order violated (stereo: not strictly increasing; 2D: decreased)
 	int decode_err; // a NAL returned an unexpected hard error
+	int stalled;    // send_nal kept returning AGAIN with no frame to receive
 	Hash base;
 	Hash dep;
 } Result;
@@ -116,6 +119,7 @@ static void account_frame(Result *r, const Edge264MvcFrame *f, int64_t *prev_dis
 // condition a real player (e.g. one frame consumed per vsync) creates and under
 // which the MVC view-pairing shortcut used to drop the IDR's dependent view.
 // Both models must yield identical output from a correct decoder.
+enum { STALL_ROUNDS = 4096 };
 static volatile size_t trace_bytes;
 static void discard_line(const char *line, void *arg) {
 	trace_bytes += strlen(line);
@@ -152,26 +156,33 @@ static Result decode_all(const uint8_t *buf, size_t size, int paced) {
 		size_t start = pos + 3;
 		size_t next = start + edge264mvc_find_start_code(buf + start, size - start);
 		int res = edge264mvc_send_nal(dec, buf + start, next - start, 0, 0);
+		// A round of AGAIN may only drop a picture that cannot be output, so a
+		// regressed decoder answering AGAIN with no frame to receive is reported
+		// as a stall after STALL_ROUNDS such rounds instead of looping forever.
+		int received = 0;
 		if (paced) {
 			// Receive one frame only when the DPB is full, then send the same NAL again.
-			if (res == EDGE264MVC_AGAIN) {
-				if (edge264mvc_receive_frame(dec, &f) == EDGE264MVC_OK) {
-					account_frame(&r, &f, &prev_disp);
-					edge264mvc_release_frame(dec, &f);
-					no_progress = 0;
-				} else if (++no_progress >= 4096) { // regressed decoder: stall, not hang
-					r.decode_err++;
-					break;
-				}
+			if (res == EDGE264MVC_AGAIN && edge264mvc_receive_frame(dec, &f) == EDGE264MVC_OK) {
+				account_frame(&r, &f, &prev_disp);
+				edge264mvc_release_frame(dec, &f);
+				received = 1;
 			}
 		} else {
 			while (edge264mvc_receive_frame(dec, &f) == EDGE264MVC_OK) {
 				account_frame(&r, &f, &prev_disp);
 				edge264mvc_release_frame(dec, &f);
+				received = 1;
 			}
 		}
-		if (res == EDGE264MVC_AGAIN)
+		if (res == EDGE264MVC_AGAIN) {
+			no_progress = received ? 0 : no_progress + 1;
+			if (no_progress >= STALL_ROUNDS) {
+				r.stalled = 1;
+				break;
+			}
 			continue;
+		}
+		no_progress = 0;
 		if (res != EDGE264MVC_OK && res != EDGE264MVC_UNSUPPORTED) {
 			r.decode_err++;
 			break;
@@ -270,6 +281,7 @@ static const char *check_result(const Result *r, int frames, int stereo, const c
 	static char gb[64], gd[64];
 	snprintf(gb, sizeof gb, "%016llx%016llx", (unsigned long long)r->base.a, (unsigned long long)r->base.b);
 	snprintf(gd, sizeof gd, "%016llx%016llx", (unsigned long long)r->dep.a, (unsigned long long)r->dep.b);
+	if (r->stalled) return "stall: send_nal kept returning AGAIN with no frame to receive";
 	if (r->decode_err) return "decode error";
 	if (r->frames != frames) return "frame count";
 	if (strcmp(gb, hb) != 0) return "base hash";
@@ -323,10 +335,25 @@ static int run_paced_forked(const uint8_t *buf, size_t size, int frames, int ste
 		exit(0);
 	}
 	close(pipefd[1]);
+	// wait for the verdict until a deadline: a decoder deadlocked inside
+	// send_nal never answers, so the child is killed and the fixture FAILs
+	const char *env = getenv("CONFORMANCE_TIMEOUT");
+	int timeout_s = env ? atoi(env) : 300;
+	struct pollfd pfd = {pipefd[0], POLLIN, 0};
+	int ready;
+	while ((ready = poll(&pfd, 1, timeout_s * 1000)) < 0 && errno == EINTR)
+		continue;
+	int status;
+	if (ready <= 0) {
+		kill(pid, SIGKILL);
+		waitpid(pid, &status, 0);
+		close(pipefd[0]);
+		snprintf(out, outsz, "no result within %d s (deadlock?)", timeout_s);
+		return -1;
+	}
 	char msg[256];
 	ssize_t n = read(pipefd[0], msg, sizeof msg);
 	close(pipefd[0]);
-	int status;
 	waitpid(pid, &status, 0);
 	if (n != (ssize_t)sizeof msg || !WIFEXITED(status) || WEXITSTATUS(status) != 0) {
 		snprintf(out, outsz, "decoder aborted under DPB pressure (view-pairing regression?)");
