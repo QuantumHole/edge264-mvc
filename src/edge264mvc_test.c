@@ -1012,18 +1012,30 @@ int main(int argc, char *argv[])
 			decode_file(file_name);
 		}
 	} else {
+		// a directory that cannot be listed FAILs
 		#ifdef _WIN32
-			DIR *dp;
+			DIR *dp = opendir(".");
 			struct dirent *ep;
-			dp = opendir(".");
-			while ((ep = readdir(dp)) && !decode_file(ep->d_name));
-			closedir(dp);
+			if (dp == NULL) {
+				perror(file_name);
+				count_fail++;
+			} else {
+				while ((ep = readdir(dp)) && !decode_file(ep->d_name));
+				closedir(dp);
+			}
 		#else
 			struct dirent **entries;
 			int n = scandir(".", &entries, flt, cmp);
-			while (--n >= 0 && !decode_file(entries[n]->d_name))
-				free(entries[n]);
-			free(entries);
+			if (n < 0) {
+				perror(file_name);
+				count_fail++;
+			} else {
+				while (--n >= 0 && !decode_file(entries[n]->d_name))
+					free(entries[n]);
+				for (; n >= 0; n--) // the entries left by a run that ended early
+					free(entries[n]);
+				free(entries);
+			}
 		#endif
 	}
 	
