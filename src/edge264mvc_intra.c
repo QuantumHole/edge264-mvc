@@ -542,7 +542,9 @@ static cold noinline void decode_intra8x8(uint8_t * restrict p, size_t stride, i
 		goto vertical_right_8x8_load_left;
 	
 	case I8x8_HD_8: {
-		j2s = loadu128(pT - 1);
+		// reason: Horizontal_Down uses no sample right of the block (8.3.2.2.8),
+		// where C may be another slice still being decoded, so load D and B only
+		j2s = shrc128(loadu128(pT - 8), 7);
 		i8x16 a2h = ldedge8x8(p, stride);
 		i8x16 a2p = shrd128(a2h, j2s, 7);
 		i8x16 a2q = shrd128(a2h, j2s, 8);

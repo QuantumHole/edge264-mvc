@@ -78,6 +78,8 @@ jobs:
       # inter prediction at the right picture edge against the deblocking of its reference
       - run: TSAN_OPTIONS=halt_on_error=1 setarch -R ./slice_overrun_check tests/conformance/2d/cabac_mot_frm0_full.264 2 0 20
       - run: setarch -R ./open_failure_check
+      # intra 8x8 prediction next to the slice another worker decodes
+      - run: TSAN_OPTIONS=halt_on_error=1 setarch -R ./slice_overrun_check tests/conformance/2d-synthetic/intra8x8_hd_slices.264 8 0 10
   # A short libFuzzer run seeded with the committed streams, so a change that
   # breaks the decoder on damaged input shows up before a long campaign would.
   x86_64-linux-fuzz:
