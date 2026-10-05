@@ -65,6 +65,10 @@ static void max_logs_logger(const char *str) {
 		"max-logs: log length (%zd) differs from log_buf size (%zu)\n",
 		strlen(str) + 1, sizeof(dec->log_buf));
 }
+static void unsupported_logger(const char *str) {
+	ASSERT(strstr(str, "nal_unit_type:") == NULL || strstr(str, " # unsupported\n") != NULL,
+		"unsupp-nals: the trace of an unsupported NAL lacks the unsupported marker:\n%s\n", str);
+}
 static void finish_frame_post() {
 	ASSERT(count_frames == 12,
 		"finish-frame: number of decoded frames (%d) differs from expected (12)\n",
@@ -505,7 +509,7 @@ int main(int argc, char *argv[]) {
 	test("supp-nals", NULL, NULL, (uint8_t[]){0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, ENOBUFS, 0, 0, ENODATA});
 	test("unsupp-nals", NULL, NULL, (uint8_t[]){ENOTSUP, ENOTSUP, ENOTSUP, ENOTSUP, ENOTSUP, ENOTSUP, ENOTSUP, ENOTSUP, ENOTSUP, ENOTSUP, ENOTSUP, ENOTSUP, ENOTSUP, ENOTSUP, ENOTSUP, ENOTSUP, ENOTSUP, ENOTSUP, ENOTSUP, ENOTSUP, ENOTSUP, ENODATA});
 	test("supp-nals", NULL, NULL, (uint8_t[]){0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, ENOBUFS, 0, 0, ENODATA});
-	test("unsupp-nals", NULL, NULL, (uint8_t[]){ENOTSUP, ENOTSUP, ENOTSUP, ENOTSUP, ENOTSUP, ENOTSUP, ENOTSUP, ENOTSUP, ENOTSUP, ENOTSUP, ENOTSUP, ENOTSUP, ENOTSUP, ENOTSUP, ENOTSUP, ENOTSUP, ENOTSUP, ENOTSUP, ENOTSUP, ENOTSUP, ENOTSUP, ENODATA});
+	test("unsupp-nals", unsupported_logger, NULL, (uint8_t[]){ENOTSUP, ENOTSUP, ENOTSUP, ENOTSUP, ENOTSUP, ENOTSUP, ENOTSUP, ENOTSUP, ENOTSUP, ENOTSUP, ENOTSUP, ENOTSUP, ENOTSUP, ENOTSUP, ENOTSUP, ENOTSUP, ENOTSUP, ENOTSUP, ENOTSUP, ENOTSUP, ENOTSUP, ENODATA});
 	test("fmo-unsupp", NULL, NULL, (uint8_t[]){0, ENOTSUP, ENODATA}); // FMO PPS -> ENOTSUP, not EBADMSG
 	test("redundant-pic-cnt", NULL, NULL, (uint8_t[]){0, 0, 0, ENOTSUP, 0, ENOBUFS, ENODATA}); // primary slices decode, the redundant copy is skipped
 	test("max-logs", max_logs_logger, NULL, (uint8_t[]){0, ENODATA});

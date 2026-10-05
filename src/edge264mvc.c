@@ -531,11 +531,16 @@ static int decode_nal(Edge264MvcDecoder *dec, const uint8_t *buf, const uint8_t 
 		#endif
 	}
 	if (dec->log_cb) {
+		// every parser table entry is set, the unsupported types to unsup_NAL(_log)
+		int unsupported = parser == unsup_NAL;
+		#ifdef HAS_LOGS
+			unsupported |= parser == unsup_NAL_log;
+		#endif
 		dec->log_pos = snprintf(dec->log_buf, sizeof(dec->log_buf),
 			"\n- %snal_ref_idc: %u\n"
 			"  nal_unit_type: %u # %s%s\n",
 			forbidden_zero_bit ? "forbidden_zero_bit: 1\n  " : "", dec->nal_ref_idc,
-			dec->nal_unit_type, nal_unit_type_names[dec->nal_unit_type], unsup_if(!parser));
+			dec->nal_unit_type, nal_unit_type_names[dec->nal_unit_type], unsup_if(unsupported));
 	}
 	// a slice task owns the copy and frees it via internal_unref_nal when done
 	int ret = parser(dec, is_slice ? internal_unref_nal : NULL, is_slice ? (void *)nal_base : NULL);
