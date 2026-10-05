@@ -1161,6 +1161,46 @@ static void decode_inter_chroma(int kind, int integer, int w, int h, size_t sstr
 
 
 /**
+ * Explicit weighted bi-prediction (8-276) for a weight denominator of 7, which
+ * the blends of decode_inter_luma and decode_inter_chroma cannot compute: the
+ * weighted sum with the offsets needs 17 bits there, and the inferred weight of
+ * 128 does not fit their 8-bit weights. Rarely used by real streams, hence
+ * plain C on the prediction made apart (src) and the first one (dst).
+ */
+static void blend_wide(uint8_t *dst, size_t dstride, const uint8_t *src, size_t sstride, int w, int h, int w0, int w1, int offsets, int logWD) {
+	int o = (offsets + 1) >> 1;
+	for (int y = 0; y < h; y++, dst += dstride, src += sstride) {
+		for (int x = 0; x < w; x++)
+			dst[x] = clip3(0, 255, ((dst[x] * w0 + src[x] * w1 + (1 << logWD)) >> (logWD + 1)) + o);
+	}
+}
+static noinline void decode_inter_wide(Edge264MvcContext *ctx, int i4x4, int x, int y, int w, int h,
+	const uint8_t *src_Y, size_t sstride_Y, const uint8_t *src_C, size_t sstride_C, int refIdxX, int refIdx)
+{
+	// predict the second reference apart without weights (Cb and Cr rows
+	// alternating, then luma), then blend it into the first one
+	static const i16x8 no_weight = {pack_w(0, 1), 0, 0, 0, pack_w(0, 1), pack_w(0, 1), 0, 0};
+	uint8_t pred[512] __attribute__((aligned(16))) = {};
+	int xFrac_C = x & 7;
+	int yFrac_C = y & 7;
+	i32x4 ABCD = {little_endian32(((8 - xFrac_C) | xFrac_C << 8) * ((8 - yFrac_C) | yFrac_C << 16))};
+	decode_inter_chroma(BLEND_COPY, (x & 7) == 0 && (y & 7) == 0, w, h, sstride_C, src_C, 16, pred, ABCD, no_weight);
+	decode_inter_luma((w << 1 & 48) + (y & 3) * 4 + (x & 3), BLEND_COPY, h, sstride_Y, src_Y, 16, pred + 256, no_weight);
+	size_t stride_C = ctx->t.stride[1] >> 1;
+	uint8_t *dst_C = ctx->samples_mb[1] + (y444[i4x4] >> 1) * ctx->t.stride[1] + (x444[i4x4] >> 1);
+	uint8_t *dst_Y = ctx->samples_mb[0] + y444[i4x4] * ctx->t.stride[0] + x444[i4x4];
+	for (int c = 0; c < 3; c++) {
+		blend_wide(c ? dst_C + (c - 1) * stride_C : dst_Y, c ? stride_C * 2 : ctx->t.stride[0],
+			c ? pred + (c - 1) * 16 : pred + 256, c ? 32 : 16, c ? w >> 1 : w, c ? h >> 1 : h,
+			ctx->t.explicit_weights[c][refIdxX], ctx->t.explicit_weights[c][refIdx],
+			ctx->t.explicit_offsets[c][refIdxX] + ctx->t.explicit_offsets[c][refIdx],
+			c ? ctx->t.chroma_log2_weight_denom : ctx->t.luma_log2_weight_denom);
+	}
+}
+
+
+
+/**
  * Decode a single Inter block, fetching refIdx and mv at the given index in
  * memory, then computing the samples for the three color planes.
  * 
@@ -1228,6 +1268,7 @@ static void noinline decode_inter(Edge264MvcContext *ctx, int i, int w, int h) {
 	
 	// prediction coeffs {wY, oY, logWD_Y, logWD_C, wCb, wCr, oCb, oCr}
 	i16x8 wod = {pack_w(0, 1), 0, 0, 0, pack_w(0, 1), pack_w(0, 1), 0, 0}; // no_weight
+	int wide = 0;
 	int refIdx = mb->refIdx[i8x8];
 	int refIdxX = mb->refIdx[i8x8 ^ 4];
 	if (ctx->t.pps.weighted_bipred_idc != 1) {
@@ -1264,37 +1305,17 @@ static void noinline decode_inter(Edge264MvcContext *ctx, int i, int w, int h) {
 		}
 	} else if (i8x8 >= 4) { // explicit2
 		refIdx += 32;
-		// The else "halve both weights" arm targets the case where both weights
-		// are the max-denom default (2^7 = 128, unrepresentable in the signed
-		// int8 the blend packs them into). This (wX & w) != 128 test also routes a
-		// lone default 128 paired with a positive explicit weight to the
-		// full-precision arm, where pack_w stores 128 as a signed int8 that reads
-		// back as -128 -> wrong bipred blend. Reachable only at
-		// luma/chroma_log2_weight_denom == 7 with one ref defaulted and the other
-		// explicitly weighted (absent from the conformance set, WARNING untested);
-		// a bit-exact fix for a 128 paired with an odd weight needs a
-		// wider-precision blend (halving would round the odd weight).
-		if (__builtin_expect((ctx->t.explicit_weights[0][refIdxX] & ctx->t.explicit_weights[0][refIdx]) != 128, 1)) {
+		// at weight denominator 7 the blend is done apart, see blend_wide
+		wide = ctx->t.luma_log2_weight_denom == 7 || ctx->t.chroma_log2_weight_denom == 7;
+		if (!wide) {
 			wod[0] = pack_w(ctx->t.explicit_weights[0][refIdxX], ctx->t.explicit_weights[0][refIdx]);
 			wod[1] = ((ctx->t.explicit_offsets[0][refIdxX] + ctx->t.explicit_offsets[0][refIdx] + 1) | 1) * (1 << ctx->t.luma_log2_weight_denom);
 			wod[2] = ctx->t.luma_log2_weight_denom + 1;
-		} else {
-			wod[0] = pack_w(ctx->t.explicit_weights[0][refIdxX] >> 1, ctx->t.explicit_weights[0][refIdx] >> 1);
-			wod[1] = ((ctx->t.explicit_offsets[0][refIdxX] + ctx->t.explicit_offsets[0][refIdx] + 1) | 1) * (1 << ctx->t.luma_log2_weight_denom) >> 1;
-			wod[2] = ctx->t.luma_log2_weight_denom;
-		}
-		if (__builtin_expect((ctx->t.explicit_weights[1][refIdxX] & ctx->t.explicit_weights[1][refIdx]) != 128, 1)) {
 			wod[4] = pack_w(ctx->t.explicit_weights[1][refIdxX], ctx->t.explicit_weights[1][refIdx]);
 			wod[5] = pack_w(ctx->t.explicit_weights[2][refIdxX], ctx->t.explicit_weights[2][refIdx]);
 			wod[6] = ((ctx->t.explicit_offsets[1][refIdxX] + ctx->t.explicit_offsets[1][refIdx] + 1) | 1) * (1 << ctx->t.chroma_log2_weight_denom);
 			wod[7] = ((ctx->t.explicit_offsets[2][refIdxX] + ctx->t.explicit_offsets[2][refIdx] + 1) | 1) * (1 << ctx->t.chroma_log2_weight_denom);
 			wod[3] = ctx->t.chroma_log2_weight_denom + 1;
-		} else {
-			wod[4] = pack_w(ctx->t.explicit_weights[1][refIdxX] >> 1, ctx->t.explicit_weights[1][refIdx] >> 1);
-			wod[5] = pack_w(ctx->t.explicit_weights[2][refIdxX] >> 1, ctx->t.explicit_weights[2][refIdx] >> 1);
-			wod[6] = ((ctx->t.explicit_offsets[1][refIdxX] + ctx->t.explicit_offsets[1][refIdx] + 1) | 1) * (1 << ctx->t.chroma_log2_weight_denom) >> 1;
-			wod[7] = ((ctx->t.explicit_offsets[2][refIdxX] + ctx->t.explicit_offsets[2][refIdx] + 1) | 1) * (1 << ctx->t.chroma_log2_weight_denom) >> 1;
-			wod[3] = ctx->t.chroma_log2_weight_denom;
 		}
 	}
 	
@@ -1342,6 +1363,11 @@ static void noinline decode_inter(Edge264MvcContext *ctx, int i, int w, int h) {
 		}
 		sstride_C = 16;
 		src_C = ctx->edge_buf + 672;
+	}
+	
+	if (__builtin_expect(wide, 0)) {
+		decode_inter_wide(ctx, i4x4, x, y, w, h, src_Y, sstride_Y, src_C, sstride_C, refIdxX, refIdx);
+		return;
 	}
 	
 	// chroma prediction comes first since it can be inlined

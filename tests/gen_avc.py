@@ -185,12 +185,15 @@ def gen_slice_layer_without_partitioning(bits, f, slice):
 			bits = gen_ue(bits, int(re.findall(r"\d+", slice.explicit_weights_l0[0].Cb)[1]))
 			for i in range(slice_type + 1):
 				for ref in map_dicts(vars(slice)[f"explicit_weights_l{i}"]):
-					for plane in ("Y", "Cb", "Cr"):
-						weight, denom, offset = map(int, re.findall(r"\-?\d+", vars(ref)[plane]))
-						bits = bits << 1 | int(weight != 2 ** denom or offset != 0)
-						if weight != 2 ** denom or offset != 0:
-							bits = gen_se(bits, weight)
-							bits = gen_se(bits, offset)
+					# one flag for luma, then one for both chroma planes (7.3.3.2)
+					for planes in (("Y",), ("Cb", "Cr")):
+						values = [tuple(map(int, re.findall(r"\-?\d+", vars(ref)[p]))) for p in planes]
+						present = any(weight != 2 ** denom or offset != 0 for weight, denom, offset in values)
+						bits = bits << 1 | int(present)
+						if present:
+							for weight, denom, offset in values:
+								bits = gen_se(bits, weight)
+								bits = gen_se(bits, offset)
 	if slice.nal_ref_idc:
 		if IdrPicFlag:
 			bits = bits << 1 | slice.no_output_of_prior_pics_flag

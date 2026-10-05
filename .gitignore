@@ -43,6 +43,7 @@
 !tests/gen_plane_without_d.py
 !tests/gen_reflist_poc_distance.py
 !tests/gen_long_subset_sps.py
+!tests/gen_weighted_denom7.py
 !tests/conformance_check.c
 !tests/conformance
 !tests/conformance/2d
