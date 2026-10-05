@@ -223,8 +223,10 @@ endif
 
 # ---- Final CFLAGS ------------------------------------------------------------
 # Required flags are prepended; user CFLAGS come last so they can always override.
+# -fwrapv: the SIMD code relies on vector lanes wrapping on overflow (deblocking,
+# transforms, CABAC contexts), which GCC otherwise treats as undefined.
 _THREAD_FLAG := $(if $(findstring $(OS),macos linux android windows),-pthread)
-override CFLAGS := $(_BASE_ARCH) -std=gnu11 -O3 -flax-vector-conversions -Wno-override-init $(_THREAD_FLAG) $(SANITIZE_FLAGS) $(CFLAGS)
+override CFLAGS := $(_BASE_ARCH) -std=gnu11 -O3 -fwrapv -flax-vector-conversions -Wno-override-init $(_THREAD_FLAG) $(SANITIZE_FLAGS) $(CFLAGS)
 
 # ---- Object file flags -------------------------------------------------------
 # -fPIC is required for shared libraries on ELF targets.

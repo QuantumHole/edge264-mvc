@@ -68,6 +68,9 @@ jobs:
       - run: sudo apt-get update && sudo apt-get install -y clang
       - run: setarch -R make CC=clang SANITIZE=address,undefined check
       - run: setarch -R make CC=clang SANITIZE=address,undefined check-asan
+      # GCC's UndefinedBehaviorSanitizer too, which unlike clang's checks the
+      # vector lanes for signed overflow (the Makefile defines it with -fwrapv)
+      - run: make clean && setarch -R make CC=gcc SANITIZE=undefined check
       - run: make clean
       - run: make CC=clang SANITIZE=thread CFLAGS="-march=x86-64 -g" BUILDTEST=no conformance_check liveness_check asan_check multi_decoder_check slice_overrun_check open_failure_check
       - run: EDGE264MVC_THREADS=8 setarch -R ./conformance_check run tests/conformance/manifest.txt tests/conformance
