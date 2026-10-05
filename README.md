@@ -249,6 +249,7 @@ The whole API is declared in [edge264mvc.h](edge264mvc.h), and the library is ca
 - **Trace** - the conformance streams are decoded once more with the header trace on, which must not change the output.
 - **API contract** ([`tests/api_check.c`](tests/api_check.c)) - the promises of the API itself: version and defaults, the results for invalid arguments, the end of a stream, a flush after the end followed by the same stream again, timestamps passed through to their frames, and a caller that holds its latest frame through an end of sequence and a change of the frame size.
 - **Several decoders** ([`tests/multi_decoder_check.c`](tests/multi_decoder_check.c)) - decoders in several threads at the same time, single-threaded and with worker threads, checked under ThreadSanitizer in CI.
+- **Partial receiving** ([`tests/partial_receive_check.c`](tests/partial_receive_check.c)) - a caller that receives one frame at a time and holds a few, on a damaged MVC stream that fills the decoder: no held frame may change, and no picture may come out twice.
 - **Thread creation failing** ([`tests/open_failure_check.c`](tests/open_failure_check.c)) - opening a decoder when creating one of its worker threads fails, which must fail cleanly and leave no thread behind (Linux).
 - **Overlapping slices** ([`tests/slice_overrun_check.c`](tests/slice_overrun_check.c)) - slices that a worker thread decodes past the start of the next slice before it arrives, which must give the single-threaded output, checked under ThreadSanitizer in CI.
 

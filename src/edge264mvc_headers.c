@@ -187,6 +187,11 @@ static int bump_all_frames(Edge264MvcDecoder *dec) {
 		for (int j = 0; j < 16; j++) {
 			if (dec->get_frame_queue[v][j] < 0) {
 				dec->get_frame_queue[v][j] = i;
+				// a queued picture is marked for output, as by every other path
+				// that queues one (a dependent view decoded before its base view
+				// may not be yet), so that it is neither queued again nor dropped
+				// while the caller holds it
+				dec->output_frames |= 1u << i;
 				break;
 			}
 		}

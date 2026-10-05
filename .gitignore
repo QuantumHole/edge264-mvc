@@ -49,6 +49,7 @@
 !tests/gen_subset_sps_truncated.py
 !tests/gen_cavlc8x8_deblock.py
 !tests/gen_intra8x8_hd_slices.py
+!tests/gen_mvc_requeue_dependent.py
 !tests/conformance_check.c
 !tests/conformance
 !tests/conformance/2d

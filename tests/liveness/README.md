@@ -234,3 +234,15 @@ multithreaded (`EDGE264MVC_THREADS=8` and `-1`), where these deadlocks surface.
   `edge264mvc_send_nal` never returned. A slice now waits only for slices
   decoded before it, as decoding single-threaded, and the picture is concealed
   and delivered (1 frame).
+
+- mvc_requeue_dependent.264: a 1x1-macroblock MVC stream generated with
+  tests/gen_mvc_requeue_dependent.py (from the .yaml next to it): 8 paired
+  reference access units, 16 base pictures without dependent view, an access
+  unit whose dependent view comes before its base view and takes the last free
+  DPB slot, then 20 base pictures. The base view of that access unit finds the
+  DPB full, so `make_room` runs `bump_all_frames`, whose re-slot loop queued the
+  waiting dependent view without marking it for output. A caller receiving one
+  frame per round (`tests/partial_receive_check.c`, run by `make check`) then
+  got it queued a second time and delivered as a pair, tripping the assertion
+  in `get_frame`, or, with dependent views after it, saw the slot of a held
+  dependent view reused. The loop now marks every picture it queues.

@@ -192,3 +192,9 @@ self_reference 0
 # send_nal never returned. A correct decoder conceals the picture and delivers it (1).
 # Regression => deadlock under EDGE264MVC_THREADS=8.
 reordered_damaged_slices 1
+# mvc_requeue_dependent: 8 paired reference access units, 16 base pictures without
+# dependent view, an access unit whose dependent view comes first and fills the last
+# free DPB slot, then 20 base pictures (tests/gen_mvc_requeue_dependent.py). A draining
+# caller must get all 45 base frames; tests/partial_receive_check.c also decodes it with
+# a caller receiving one frame per round.
+mvc_requeue_dependent 45
