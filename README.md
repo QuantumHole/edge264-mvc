@@ -253,7 +253,7 @@ The whole API is declared in [edge264mvc.h](edge264mvc.h), and the library is ca
 
 On the full set of 231 AVC, FRExt and MVC [conformance streams](https://www.itu.int/wftp3/av-arch/jvt-site/draft_conformance/), edge264-mvc decodes 113 exactly like the ITU reference decoder, 117 use features outside the supported profiles (and are reported as unsupported), and 1 differs. CI additionally runs the tests on Windows, under the sanitizers, and fuzzes the decoder with libFuzzer ([`tests/fuzz_decode.c`](tests/fuzz_decode.c), `make fuzz`).
 
-`edge264mvc_test` can also decode every `<video>.264` file of a directory and compare its output with a sibling `<video>.yuv`. The planned synthetic tests are listed in [tests/ROADMAP.md](tests/ROADMAP.md).
+`edge264mvc_test` can also decode every `<video>.264` file of a directory and compare every sample of its output with a sibling `<video>.yuv` ([`tests/edge264mvc_test_yuv_check.py`](tests/edge264mvc_test_yuv_check.py) checks that it does). The planned synthetic tests are listed in [tests/ROADMAP.md](tests/ROADMAP.md).
 
 
 ## Relation to edge264

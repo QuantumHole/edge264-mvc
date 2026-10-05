@@ -425,6 +425,7 @@ else
 	$(Q)$(MAKE) --no-print-directory check-conformance
 	$(Q)$(MAKE) --no-print-directory check-stream-input
 	$(Q)$(MAKE) --no-print-directory check-edge264mvc-test-liveness
+	$(Q)$(MAKE) --no-print-directory check-edge264mvc-test-yuv
 	$(Q)$(MAKE) --no-print-directory check-robustness
 	$(Q)$(MAKE) --no-print-directory check-api
 	$(Q)$(MAKE) --no-print-directory check-multi-decoder
@@ -499,6 +500,14 @@ endif
 check-edge264mvc-test-liveness: edge264mvc_test$(EXE)
 ifneq ($(OS),wasm)
 	$(Q)$(PY) tests/edge264mvc_test_liveness.py --exe ./edge264mvc_test$(EXE)
+endif
+
+# edge264mvc_test's comparison with a reference YUV must see every sample: a
+# change at any corner of any plane of a frame, cropped or not, must FAIL.
+.PHONY: check-edge264mvc-test-yuv
+check-edge264mvc-test-yuv: edge264mvc_test$(EXE)
+ifneq ($(OS),wasm)
+	$(Q)$(PY) tests/edge264mvc_test_yuv_check.py --exe ./edge264mvc_test$(EXE)
 endif
 
 # Sanitizer regression over the crafted-SEI fixtures (tests/asan/). Build with a
