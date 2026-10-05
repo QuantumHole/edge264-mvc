@@ -20,10 +20,11 @@
 #include "edge264mvc_internal.h"
 #include "edge264mvc_intra.c"
 #include "edge264mvc_inter.c"
-// reason: edge264mvc_inter.c refers to this function of edge264mvc_headers.c,
+// reason: edge264mvc_inter.c refers to these functions of edge264mvc_headers.c,
 // which these tests do not build; the single-threaded code under test never
-// waits on another frame, so it is never called here
+// waits on another frame, so they are never called here
 static int release_terminal_task_dependencies(Edge264MvcDecoder *dec) { (void)dec; return 0; }
+static noinline void known_mb_bound(Edge264MvcContext *ctx, int32_t mb_bound, int claimed) { (void)ctx; (void)mb_bound; (void)claimed; }
 #ifdef __wasm__
 	#define mprotect(addr, len, prot) 0
 #endif

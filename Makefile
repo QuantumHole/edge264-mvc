@@ -402,7 +402,7 @@ uninstall:
 # ==============================================================================
 .PHONY: clean clear
 clean clear:
-	$(Q)rm -f edge264mvc_test edge264mvc_test.exe edge264mvc_test.js edge264mvc_test.wasm edge264mvc_check edge264mvc_check.exe edge264mvc_check.js edge264mvc_check.wasm conformance_check conformance_check.exe liveness_check liveness_check.exe asan_check asan_check.exe api_check api_check.exe multi_decoder_check multi_decoder_check.exe static_plugin.so static_plugin.dll fuzz_decode edge264*.o libedge264mvc.a edge264mvc.$(MAJOR).dll libedge264mvc.dll.a edge264mvc.js edge264mvc.wasm libedge264mvc.$(MAJOR).dylib libedge264mvc-universal.$(MAJOR).dylib libedge264mvc.so libedge264mvc.so.$(MAJOR)
+	$(Q)rm -f edge264mvc_test edge264mvc_test.exe edge264mvc_test.js edge264mvc_test.wasm edge264mvc_check edge264mvc_check.exe edge264mvc_check.js edge264mvc_check.wasm conformance_check conformance_check.exe liveness_check liveness_check.exe asan_check asan_check.exe api_check api_check.exe multi_decoder_check multi_decoder_check.exe slice_overrun_check slice_overrun_check.exe static_plugin.so static_plugin.dll fuzz_decode edge264*.o libedge264mvc.a edge264mvc.$(MAJOR).dll libedge264mvc.dll.a edge264mvc.js edge264mvc.wasm libedge264mvc.$(MAJOR).dylib libedge264mvc-universal.$(MAJOR).dylib libedge264mvc.so libedge264mvc.so.$(MAJOR)
 
 
 # ==============================================================================
@@ -428,6 +428,7 @@ else
 	$(Q)$(MAKE) --no-print-directory check-robustness
 	$(Q)$(MAKE) --no-print-directory check-api
 	$(Q)$(MAKE) --no-print-directory check-multi-decoder
+	$(Q)$(MAKE) --no-print-directory check-slice-overrun
 endif
 
 edge264mvc_check$(EXE): src/edge264mvc_check.c edge264mvc.h src/edge264mvc_internal.h $(LIBNAME)
@@ -530,6 +531,17 @@ check-multi-decoder: multi_decoder_check$(EXE)
 
 multi_decoder_check$(EXE): tests/multi_decoder_check.c edge264mvc.h $(LIBNAME)
 	$(Q)$(CCLD) -I. tests/multi_decoder_check.c $(CPPFLAGS) $(CFLAGS) $(EXEFLAGS) -o $@
+
+# Slices that run past the start of the next slice while a worker thread
+# decodes them before the parser has seen it, fed with pauses that let them get
+# there (see tests/slice_overrun_check.c): every run must give the
+# single-threaded output. Run under ThreadSanitizer in CI.
+.PHONY: check-slice-overrun
+check-slice-overrun: slice_overrun_check$(EXE)
+	$(Q)$(TIMEOUT) ./slice_overrun_check$(EXE) tests/conformance/2d-synthetic/overrun_reference.264 8 300 20
+
+slice_overrun_check$(EXE): tests/slice_overrun_check.c edge264mvc.h $(LIBNAME)
+	$(Q)$(CCLD) -I. tests/slice_overrun_check.c $(CPPFLAGS) $(CFLAGS) $(EXEFLAGS) -o $@
 
 # The same crafted fixtures without a sanitizer, single-threaded and with four
 # worker threads, as part of `check`: they also guard hangs, some of which need

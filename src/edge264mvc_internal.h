@@ -515,6 +515,7 @@ struct Edge264MvcDecoder {
 	uint16_t acked_tasks; // tasks that know their mb_bound and decode no macroblock past it
 	uint16_t task_after[16]; // older tasks of the same picture whose macroblocks a task may share, to finish first
 	int32_t task_bounds[16]; // mb_bound of each task, written by the parser once known
+	int8_t task_wait_pic[16]; // frame whose progress each task waits for in wait_frame_progress, or -1
 	volatile union { uint32_t task_dependencies[16]; i32x4 task_dependencies_v[4]; }; // frames on which each task depends to start
 	union { int8_t taskPics[16]; i8x16 taskPics_v; }; // values of currPic for each task
 	uint64_t deblock_pending_slices; // used entries of deblock_pending

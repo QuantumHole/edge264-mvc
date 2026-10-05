@@ -2,6 +2,7 @@
 
 #define pack_w(w0, w1) ((int)((unsigned)(w1) << 8 | (w0) & 255)) // w1 may be negative
 static int release_terminal_task_dependencies(Edge264MvcDecoder *dec);
+static noinline void known_mb_bound(Edge264MvcContext *ctx, int32_t mb_bound, int claimed);
 
 /**
  * Wait until the frame in slot pic has made all macroblocks below addr final
@@ -28,10 +29,24 @@ static noinline void wait_frame_progress(Edge264MvcContext *ctx, int pic, int32_
 	int32_t wake_addr = addr + 2 * ctx->t.pic_width_in_mbs;
 	pthread_mutex_lock(&dec->lock);
 	while (__atomic_load_n(&dec->next_deblock_addr[pic], __ATOMIC_ACQUIRE) < addr) {
+		// A slice started before its bound was known learns it here too, as the
+		// parser waits for that before starting a later picture (settle_mb_bounds),
+		// and wakes it through task_wait_pic.
+		int32_t mb_bound;
+		if (ctx->t.mb_bound == BOUND_UNKNOWN &&
+			(mb_bound = __atomic_load_n(&dec->task_bounds[ctx->task_id], __ATOMIC_ACQUIRE)) != BOUND_UNKNOWN) {
+			pthread_mutex_unlock(&dec->lock);
+			known_mb_bound(ctx, mb_bound, 1);
+			pthread_mutex_lock(&dec->lock);
+			continue;
+		}
 		// conceals pic (or a frame its pending writer depends on) if a damaged
 		// slice left it incomplete with no task left to finish it
-		if (!release_terminal_task_dependencies(dec))
+		if (!release_terminal_task_dependencies(dec)) {
+			dec->task_wait_pic[ctx->task_id] = pic;
 			wait_frame_locked(dec, pic, wake_addr);
+			dec->task_wait_pic[ctx->task_id] = -1;
+		}
 	}
 	pthread_mutex_unlock(&dec->lock);
 }

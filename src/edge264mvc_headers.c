@@ -62,10 +62,12 @@ static const i8x16 Default_8x8_Inter[4] = {
  * test on TopFieldOrderCnt is sufficient.
  */
 static void release_held_task(Edge264MvcDecoder *dec, int32_t mb_bound);
+static void settle_mb_bounds(Edge264MvcDecoder *dec, int pic);
 
 static void unset_currPic(Edge264MvcDecoder *dec) {
 	assert(dec->currPic >= 0);
 	release_held_task(dec, INT_MAX); // the picture ends, so does its last slice
+	settle_mb_bounds(dec, dec->currPic);
 	int non_base_view = dec->non_base_frames >> dec->currPic & 1;
 	if ((dec->short_term_frames | dec->long_term_frames) & 1u << dec->currPic) {
 		unsigned same_views = non_base_view ? dec->non_base_frames : ~dec->non_base_frames;
@@ -286,6 +288,7 @@ static void clear_decoder(Edge264MvcDecoder *dec) {
 	memset((void *)dec + offsetof(Edge264MvcDecoder, nal_ref_idc), 0, offsetof(Edge264MvcDecoder, log_base_us) - offsetof(Edge264MvcDecoder, nal_ref_idc));
 	dec->currPic = dec->basePic = -1;
 	dec->held_task = -1;
+	memset(dec->task_wait_pic, -1, sizeof(dec->task_wait_pic));
 	dec->PrevRefFrameNum[0] = dec->PrevRefFrameNum[1] = -1;
 	dec->taskPics_v = dec->get_frame_queue_v[0] = dec->get_frame_queue_v[1] = set8(-1);
 }
@@ -752,18 +755,29 @@ static void process_pending_slices(Edge264MvcContext *c, int currPic, int32_t fr
 
 /**
  * Saves (or restores) the samples of the slices before this one that its
- * deblocking may change: the bottom rows of the macroblock row above its first
- * macroblock (top edges of its first macroblocks) and the macroblock row of its
- * first macroblock (left edge of the first one, and top edges of those below).
- * Returns 0 if the buffer could not be allocated.
+ * deblocking may change: the bottom rows of the macroblocks above its first
+ * macroblock row (top edges), and the macroblocks of that row before its first
+ * macroblock (left edge of the first one, top edges of those below). Only
+ * older, finished slices write there, while a younger one may already decode
+ * the rest of the row. Returns 0 if the buffer could not be allocated.
  */
 static int spec_rows(Edge264MvcContext *c, int slot, int restore) {
 	Edge264MvcDecoder *dec = c->d;
-	int y = c->t.first_mb_in_slice / c->t.pic_width_in_mbs;
-	int fromY = max(y * 16 - 4, 0), toY = y * 16 + 16;
-	int fromC = max(y * 8 - 2, 0), toC = y * 8 + 8;
-	size_t sizeY = (size_t)(toY - fromY) * c->t.stride[0];
-	size_t size = sizeY + (size_t)(toC - fromC) * c->t.stride[1];
+	int width = c->t.pic_width_in_mbs;
+	int y = c->t.first_mb_in_slice / width, x = c->t.first_mb_in_slice % width;
+	struct { size_t offset, stride; int lines, from, to; } parts[6] = {
+		{0, c->t.stride[0], y > 0 ? 4 : 0, x * 16, width * 16}, // luma above
+		{0, c->t.stride[0], 16, 0, x * 16}, // luma before
+		{c->t.plane_size_Y, c->t.stride[1], y > 0 ? 2 : 0, x * 8, width * 8}, // Cb above
+		{c->t.plane_size_Y, c->t.stride[1], 8, 0, x * 8}, // Cb before
+		{c->t.plane_size_Y + (c->t.stride[1] >> 1), c->t.stride[1], y > 0 ? 2 : 0, x * 8, width * 8}, // Cr above
+		{c->t.plane_size_Y + (c->t.stride[1] >> 1), c->t.stride[1], 8, 0, x * 8}, // Cr before
+	};
+	size_t size = 0;
+	for (int i = 0; i < 6; i++)
+		size += (size_t)parts[i].lines * (parts[i].to - parts[i].from);
+	if (size == 0) // a slice starting the picture has no slice before it
+		return 1;
 	if (dec->spec_rows_sizes[slot] < size) {
 		free(dec->spec_rows_allocs[slot]);
 		dec->spec_rows_allocs[slot] = malloc(size);
@@ -771,16 +785,17 @@ static int spec_rows(Edge264MvcContext *c, int slot, int restore) {
 		if (!dec->spec_rows_allocs[slot])
 			return 0;
 	}
-	uint8_t *samples = c->t.samples_buffers[c->currPic];
-	uint8_t *rowsY = samples + (size_t)fromY * c->t.stride[0];
-	uint8_t *rowsC = samples + c->t.plane_size_Y + (size_t)fromC * c->t.stride[1];
 	uint8_t *buf = dec->spec_rows_allocs[slot];
-	if (restore) {
-		memcpy(rowsY, buf, sizeY);
-		memcpy(rowsC, buf + sizeY, size - sizeY);
-	} else {
-		memcpy(buf, rowsY, sizeY);
-		memcpy(buf + sizeY, rowsC, size - sizeY);
+	for (int i = 0; i < 6; i++) {
+		int first_line = (i & 1) ? y * (i < 2 ? 16 : 8) : y * (i < 2 ? 16 : 8) - parts[i].lines;
+		size_t n = parts[i].to - parts[i].from;
+		for (int l = 0; l < parts[i].lines; l++, buf += n) {
+			uint8_t *p = c->t.samples_buffers[c->currPic] + parts[i].offset + (size_t)(first_line + l) * parts[i].stride + parts[i].from;
+			if (restore)
+				memcpy(p, buf, n);
+			else
+				memcpy(buf, p, n);
+		}
 	}
 	return 1;
 }
@@ -1647,6 +1662,35 @@ static void release_held_task(Edge264MvcDecoder *dec, int32_t mb_bound) {
 			}
 			dec->worker_loop(dec);
 		}
+	}
+}
+
+/**
+ * Called when a picture ends, before any task of a later picture can read it.
+ * A slice that started before its bound was known may go on publishing rows
+ * past it until it learns it, so wait until every started slice of the picture
+ * acked its bound, having taken back what it published past it (overrun). The
+ * last slice has no bound, the others learned theirs long before as a rule.
+ */
+static void settle_mb_bounds(Edge264MvcDecoder *dec, int pic) {
+	if (!dec->n_threads)
+		return;
+	for (;;) {
+		unsigned unsettled = 0;
+		unsigned acked = __atomic_load_n(&dec->acked_tasks, __ATOMIC_SEQ_CST);
+		for (unsigned b = dec->busy_tasks & ~dec->pending_tasks & ~acked; b; b &= b - 1) {
+			int i = __builtin_ctz(b);
+			if (dec->taskPics[i] == pic && __atomic_load_n(&dec->task_bounds[i], __ATOMIC_RELAXED) != INT_MAX) {
+				unsettled |= 1u << i;
+				if (dec->task_wait_pic[i] >= 0) // waiting for a reference, it learns the bound there
+					wake_frame_waiters(dec, dec->task_wait_pic[i]);
+			}
+		}
+		if (!unsettled)
+			return;
+		__atomic_store_n(&dec->progress_wake_addr[pic], INT_MIN, __ATOMIC_SEQ_CST);
+		if (!(__atomic_load_n(&dec->acked_tasks, __ATOMIC_SEQ_CST) & unsettled))
+			pthread_cond_wait(&dec->frame_progress[pic], &dec->lock);
 	}
 }
 

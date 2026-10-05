@@ -152,6 +152,7 @@ static Edge264MvcDecoder *alloc_decoder(int n_threads, Edge264MvcLogCb log_cb, v
 	dec->log_base_us = get_relative_time_us();
 	dec->currPic = dec->basePic = -1;
 	dec->held_task = -1;
+	memset(dec->task_wait_pic, -1, sizeof(dec->task_wait_pic));
 	dec->PrevRefFrameNum[0] = dec->PrevRefFrameNum[1] = dec->prevFrameId = -1;
 	dec->taskPics_v = dec->get_frame_queue_v[0] = dec->get_frame_queue_v[1] = set8(-1);
 	dec->n_threads = n_threads;

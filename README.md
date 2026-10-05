@@ -249,6 +249,7 @@ The whole API is declared in [edge264mvc.h](edge264mvc.h), and the library is ca
 - **Trace** - the conformance streams are decoded once more with the header trace on, which must not change the output.
 - **API contract** ([`tests/api_check.c`](tests/api_check.c)) - the promises of the API itself: version and defaults, the results for invalid arguments, the end of a stream, a flush after the end followed by the same stream again, and timestamps passed through to their frames.
 - **Several decoders** ([`tests/multi_decoder_check.c`](tests/multi_decoder_check.c)) - decoders in several threads at the same time, single-threaded and with worker threads, checked under ThreadSanitizer in CI.
+- **Overlapping slices** ([`tests/slice_overrun_check.c`](tests/slice_overrun_check.c)) - slices that a worker thread decodes past the start of the next slice before it arrives, which must give the single-threaded output, checked under ThreadSanitizer in CI.
 
 On the full set of 231 AVC, FRExt and MVC [conformance streams](https://www.itu.int/wftp3/av-arch/jvt-site/draft_conformance/), edge264-mvc decodes 113 exactly like the ITU reference decoder, 117 use features outside the supported profiles (and are reported as unsupported), and 1 differs. CI additionally runs the tests on Windows, under the sanitizers, and fuzzes the decoder with libFuzzer ([`tests/fuzz_decode.c`](tests/fuzz_decode.c), `make fuzz`).
 

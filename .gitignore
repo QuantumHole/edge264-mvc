@@ -39,6 +39,7 @@
 !tests/gen_overlapping_slices.py
 !tests/gen_reversed_slices.py
 !tests/gen_reordered_damaged_slices.py
+!tests/gen_overrun_reference.py
 !tests/conformance_check.c
 !tests/conformance
 !tests/conformance/2d
