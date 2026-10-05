@@ -1087,12 +1087,12 @@ void *ADD_VARIANT(worker_loop)(void *arg) {
 /**
  * Returns FrameNum, the frame_num of the current picture counted on past its
  * wraparound, from the frame_num of the previous reference picture of the
- * same view. PrevRefFrameNum is 0 for an IDR picture (7.4.3), whose FrameNum
- * is thus 0 as well, so that no frame_num gap (8.2.5.2) lies before it.
+ * same view. It never starts again, not even at an IDR picture (frame_num 0,
+ * so the next multiple of MaxFrameNum): the picture order counts of types 1
+ * and 2 derived from it keep growing across IDR pictures, as those of type 0
+ * do, which the output order of the pictures before an IDR picture relies on.
  */
 static int derive_FrameNum(const Edge264MvcDecoder *dec, int frame_num, int FrameNumMask, int non_base_view) {
-	if (dec->IdrPicFlag)
-		return 0;
 	int PrevRefFrameNum = dec->PrevRefFrameNum[non_base_view];
 	return PrevRefFrameNum + 1 + ((frame_num - PrevRefFrameNum - 1) & FrameNumMask);
 }
@@ -2140,9 +2140,11 @@ int ADD_VARIANT(parse_slice_layer_without_partitioning)(Edge264MvcDecoder *dec, 
 	log_dec(dec, "  frame_num: {bits: %u, absolute: %u}\n",
 		sps->log2_max_frame_num, dec->FrameNum);
 	
-	// check for gaps in frame_num (8.2.5.2)
+	// check for gaps in frame_num (8.2.5.2), which only non-IDR pictures have:
+	// an IDR picture continues at the next multiple of MaxFrameNum, and the
+	// reference pictures before it are all dropped anyway
 	int gap = dec->FrameNum - dec->PrevRefFrameNum[non_base_view];
-	if (__builtin_expect(gap > 1, 0)) {
+	if (__builtin_expect(gap > 1, 0) && !dec->IdrPicFlag) {
 		// The frames inferred for the gap get the content of the latest short-term
 		// reference of this view, as in FFmpeg (zeros without one, as conceal_frame
 		// uses). They have no content of their own, so a damaged stream predicting

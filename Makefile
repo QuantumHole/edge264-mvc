@@ -444,10 +444,13 @@ edge264mvc_check$(EXE): src/edge264mvc_check.c edge264mvc.h src/edge264mvc_inter
 # Committed decode-regression over the bundled JVT conformance fixtures
 # (tests/conformance/). Run by `check` on every non-wasm target; also
 # runnable standalone. Needs no reference YUVs - the manifest carries
-# the expected per-view hashes, so a fresh clone runs it fully offline.
+# the expected per-view hashes, so a fresh clone runs it fully offline. The
+# second pass holds every fixture to the same values when frames are received
+# only once the decoder is full (CONFORMANCE_PACED).
 .PHONY: check-conformance
 check-conformance: conformance_check$(EXE)
 	$(Q)./conformance_check$(EXE) run tests/conformance/manifest.txt tests/conformance
+	$(Q)CONFORMANCE_PACED=1 ./conformance_check$(EXE) run tests/conformance/manifest.txt tests/conformance
 	$(Q)$(MAKE) --no-print-directory check-conformance-mt
 	$(Q)$(MAKE) --no-print-directory check-conformance-trace
 	$(Q)$(MAKE) --no-print-directory check-liveness

@@ -401,6 +401,11 @@ static int do_run(const char *manifest, const char *dir) {
 			continue;
 		if (nf < 6)
 			paced = 0;
+		// CONFORMANCE_PACED holds every fixture to its values under both consumer
+		// models, so output that depends on when frames are received fails
+		// deterministically rather than only with worker threads
+		if (getenv("CONFORMANCE_PACED") != NULL)
+			paced = 1;
 		total++;
 		char path[4096];
 		snprintf(path, sizeof(path), "%s/%s.264", dir, name);

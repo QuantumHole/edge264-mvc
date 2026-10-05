@@ -151,7 +151,7 @@ Without the fix this line FAILs.
 
 ## `idr_after_long_term.264`
 
-Guards the frame_num of an IDR picture. A 32x32 stream allowing one reference picture whose references are all long-term: an IDR picture marked long-term, then two reference P pictures that mark themselves long-term with MMCO 6, followed by a second IDR picture and a P picture of skipped macroblocks predicting from it (`tests/gen_idr_after_long_term.py`). PrevRefFrameNum is 0 for an IDR picture (7.4.3), but the decoder counted the IDR picture's frame_num on from the previous reference picture, so it saw a frame_num gap (8.2.5.2) before it; with every reference slot long-term there was no room for the frames inferred for the gap, and the IDR picture and the P picture after it were rejected as corrupt. The hash is anchored to the JM reference decoder, which FFmpeg matches.
+Guards the frame_num of an IDR picture. A 32x32 stream allowing one reference picture whose references are all long-term: an IDR picture marked long-term, then two reference P pictures that mark themselves long-term with MMCO 6, followed by a second IDR picture and a P picture of skipped macroblocks predicting from it (`tests/gen_idr_after_long_term.py`). The decoder counts frame_num on across IDR pictures, which continue at the next multiple of MaxFrameNum, and it took that jump for a frame_num gap (8.2.5.2, which concerns non-IDR pictures only); with every reference slot long-term there was no room for the frames inferred for the gap, and the IDR picture and the P picture after it were rejected as corrupt. The hash is anchored to the JM reference decoder, which FFmpeg matches.
 
 Without the fix this line FAILs.
 
