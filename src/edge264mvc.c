@@ -141,6 +141,10 @@ static int unsup_NAL(Edge264MvcDecoder *dec, Edge264MvcUnrefCb unref_cb, void *u
 	return ENOTSUP;
 }
 
+static int corrupt_NAL(Edge264MvcDecoder *dec, Edge264MvcUnrefCb unref_cb, void *unref_arg) {
+	return EBADMSG;
+}
+
 
 
 static Edge264MvcDecoder *alloc_decoder(int n_threads, Edge264MvcLogCb log_cb, void *log_arg, int log_mbs) {
@@ -514,16 +518,26 @@ static int decode_nal(Edge264MvcDecoder *dec, const uint8_t *buf, const uint8_t 
 	dec->gb.end = end;
 	dec->gb.msb_cache = (size_t)1 << (SIZE_BIT - 1);
 	refill(&dec->gb, 0);
-	dec->nal_ref_idc = dec->gb.msb_cache >> (SIZE_BIT - 3);
+	int forbidden_zero_bit = dec->gb.msb_cache >> (SIZE_BIT - 1);
+	dec->nal_ref_idc = dec->gb.msb_cache >> (SIZE_BIT - 3) & 3;
 	dec->nal_unit_type = dec->gb.msb_cache >> (SIZE_BIT - 8) & 0x1f;
 	dec->gb.msb_cache = dec->gb.msb_cache << 8 | 1 << 7;
 	refill(&dec->gb, 0);
 	Parser parser = dec->parse_nal_unit[dec->nal_unit_type];
+	// a set forbidden_zero_bit marks a damaged NAL (7.4.1), which the reference
+	// decoders discard instead of decoding it with whatever its header now says
+	if (forbidden_zero_bit) {
+		parser = corrupt_NAL;
+		#ifdef HAS_LOGS
+			if (dec->log_cb)
+				parser = corrupt_NAL_log;
+		#endif
+	}
 	if (dec->log_cb) {
 		dec->log_pos = snprintf(dec->log_buf, sizeof(dec->log_buf),
-			"\n- nal_ref_idc: %u\n"
+			"\n- %snal_ref_idc: %u\n"
 			"  nal_unit_type: %u # %s%s\n",
-			dec->nal_ref_idc,
+			forbidden_zero_bit ? "forbidden_zero_bit: 1\n  " : "", dec->nal_ref_idc,
 			dec->nal_unit_type, nal_unit_type_names[dec->nal_unit_type], unsup_if(!parser));
 	}
 	// a slice task owns the copy and frees it via internal_unref_nal when done

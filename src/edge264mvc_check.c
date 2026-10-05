@@ -511,9 +511,16 @@ int main(int argc, char *argv[]) {
 	test("max-logs", max_logs_logger, NULL, (uint8_t[]){0, ENODATA});
 	test("finish-frame", NULL, finish_frame_post, (uint8_t[]){0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, ENOBUFS, ENODATA});
 	test("nal-ref-idc-0", NULL, NULL, (uint8_t[]){0, 0, 0, 0, 0, 0, 0, 0, ENOBUFS, 0, 0, ENODATA});
+	test("forbidden-bit", NULL, NULL, (uint8_t[]){0, 0, 0, EBADMSG, EBADMSG, 0, ENODATA}); // damaged NAL headers are rejected
 	test_page_boundaries();
 	test_intra_decoding();
 	test_inter_decoding();
+	
+	// the parsers without logging differ from the ones above
+	edge264mvc_close(&dec);
+	settings.log_cb = NULL;
+	PASSERT(edge264mvc_open(&dec, &settings) == EDGE264MVC_OK, "edge264mvc_open");
+	test("forbidden-bit", NULL, NULL, (uint8_t[]){0, 0, 0, EBADMSG, EBADMSG, 0, ENODATA});
 	printf("\e[A\e[K%d " GREEN "PASS" RESET "\n", count_pass);
 	
 	// clear all open stuff

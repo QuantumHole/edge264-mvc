@@ -1595,6 +1595,7 @@ void *worker_loop_v3(void *d);
 void *worker_loop_log(void *d);
 int ignore_NAL_log(Edge264MvcDecoder *dec, Edge264MvcUnrefCb unref_cb, void *unref_arg);
 int unsup_NAL_log(Edge264MvcDecoder *dec, Edge264MvcUnrefCb unref_cb, void *unref_arg);
+int corrupt_NAL_log(Edge264MvcDecoder *dec, Edge264MvcUnrefCb unref_cb, void *unref_arg);
 int parse_slice_layer_without_partitioning(Edge264MvcDecoder *dec, Edge264MvcUnrefCb unref_cb, void *unref_arg);
 int parse_slice_layer_without_partitioning_v2(Edge264MvcDecoder *dec, Edge264MvcUnrefCb unref_cb, void *unref_arg);
 int parse_slice_layer_without_partitioning_v3(Edge264MvcDecoder *dec, Edge264MvcUnrefCb unref_cb, void *unref_arg);

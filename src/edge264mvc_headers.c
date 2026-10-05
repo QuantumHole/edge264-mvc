@@ -338,6 +338,9 @@ int ADD_VARIANT(parse_end_of_sequence)(Edge264MvcDecoder *dec, Edge264MvcUnrefCb
 	int unsup_NAL_log(Edge264MvcDecoder *dec, Edge264MvcUnrefCb unref_cb, void *unref_arg) {
 		return print_dec(dec, "  decode_NAL_result: %s\n", ENOTSUP);
 	}
+	int corrupt_NAL_log(Edge264MvcDecoder *dec, Edge264MvcUnrefCb unref_cb, void *unref_arg) {
+		return print_dec(dec, "  decode_NAL_result: %s\n", EBADMSG);
+	}
 #endif
 
 

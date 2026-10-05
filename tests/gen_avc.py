@@ -504,7 +504,7 @@ def main():
 			if "nal_ref_idc" not in vars(nal): continue
 			f.write(b"\x00\x00\x00\x01")
 			bits = 1 # leading set bit
-			bits <<= 1 # forbidden_zero_bit
+			bits = bits << 1 | vars(nal).get("forbidden_zero_bit", 0)
 			bits = bits << 2 | nal.nal_ref_idc
 			bits = bits << 5 | nal.nal_unit_type
 			if nal.nal_unit_type in gen_bits:
