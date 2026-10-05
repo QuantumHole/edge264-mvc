@@ -58,6 +58,7 @@ Crashes, hangs, wrong output and decode failures found by decoding a large varie
 | Fix | Failure mode it removes |
 |---|---|
 | Floor `max_num_ref_frames` at 1 so a reference IDR fits the DPB | reference IDR didn't fit the DPB (C.4.5 fullness assert) |
+| Discard one reference when the marking of a picture leaves more than `max_num_ref_frames`, as FFmpeg does (`parse_dec_ref_pic_marking`) | on a damaged stream whose long-term references filled the reference set, which the sliding window does not retire, the next reference picture left one reference more than the stream declared, which aborted builds with assertions enabled |
 | Floor derived `max_dec_frame_buffering` at the reference count | a resolution-exceeds-signaled-level stream aborted a C.4.5 assert |
 | Keep the signaled `max_num_ref_frames` on an over-level stream (bound by DPB capacity, not the level) | a frame-exceeds-signaled-level stream clamped its reference set below the count its own slices use - silently wrong inter prediction (single-thread) and a nondeterministic multithreaded decode |
 | Report an FMO PPS (`num_slice_groups > 1`) as `EDGE264MVC_UNSUPPORTED` instead of a decode error | the unparsed slice-group map left the bit position mid-syntax, so the PPS misfired `EDGE264MVC_CORRUPT` - a valid but unsupported stream looked corrupt instead of cleanly skippable |

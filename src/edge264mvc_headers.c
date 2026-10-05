@@ -69,7 +69,9 @@ static void unset_currPic(Edge264MvcDecoder *dec) {
 	release_held_task(dec, INT_MAX); // the picture ends, so does its last slice
 	settle_mb_bounds(dec, dec->currPic);
 	int non_base_view = dec->non_base_frames >> dec->currPic & 1;
-	if ((dec->short_term_frames | dec->long_term_frames) & 1u << dec->currPic) {
+	// a picture the reference marking ran for sets PrevRefFrameNum (7.4.3) and
+	// commits the marking, even when it discarded the picture itself
+	if (dec->currPic_marked) {
 		unsigned same_views = non_base_view ? dec->non_base_frames : ~dec->non_base_frames;
 		dec->PrevRefFrameNum[non_base_view] = dec->FrameNums[dec->currPic];
 		dec->prevPicOrderCnt[non_base_view] = dec->FieldOrderCnt[0][dec->currPic];
@@ -1072,6 +1074,7 @@ void *ADD_VARIANT(worker_loop)(void *arg) {
  */
 static void parse_dec_ref_pic_marking(Edge264MvcDecoder *dec, Edge264MvcSeqParameterSet *sps)
 {
+	dec->currPic_marked = 1;
 	// no_output_of_prior_pics_flag is easier to support than to signal unsupported
 	if (dec->IdrPicFlag) {
 		int no_output_of_prior_pics_flag = get_u1(&dec->gb);
@@ -1173,6 +1176,32 @@ static void parse_dec_ref_pic_marking(Edge264MvcDecoder *dec, Edge264MvcSeqParam
 		dec->long_term_frames &= ~(1u << next);
 	}
 	*(long_term_frame ? &dec->long_term_frames : &dec->short_term_frames) |= 1u << dec->currPic;
+	
+	// A non-conformant stream may now hold more references than
+	// max_num_ref_frames (long-term ones the sliding window does not retire, or
+	// MMCOs that add some), so discard one as FFmpeg does: the oldest short-term
+	// or non-existing frame other than the current picture, the current picture
+	// if it is the only short-term one, or the long-term reference with the
+	// lowest LongTermFrameIdx if there is no short-term one. JM rejects the
+	// stream instead.
+	if (__builtin_popcount(dec->short_term_frames | dec->long_term_frames) > sps->max_num_ref_frames) {
+		unsigned candidates = dec->short_term_frames & ~(1u << dec->currPic);
+		int unref = dec->currPic, lowest = INT_MAX;
+		if (!dec->short_term_frames) {
+			for (unsigned r = dec->long_term_frames; r; r &= r - 1) {
+				int i = __builtin_ctz(r);
+				if (dec->LongTermFrameIdx[i] < lowest)
+					lowest = dec->LongTermFrameIdx[unref = i];
+			}
+		}
+		for (unsigned r = candidates; r; r &= r - 1) {
+			int i = __builtin_ctz(r);
+			if (dec->FrameNums[i] < lowest)
+				lowest = dec->FrameNums[unref = i];
+		}
+		dec->short_term_frames &= ~(1u << unref);
+		dec->long_term_frames &= ~(1u << unref);
+	}
 }
 
 
@@ -1936,8 +1965,7 @@ int ADD_VARIANT(parse_slice_layer_without_partitioning)(Edge264MvcDecoder *dec, 
 	int dep_corrupt = 0;
 	if (dec->nal_unit_type == 20 && t->slice_type < 2 && dec->currPic >= 0 &&
 		(dec->non_base_frames >> dec->currPic & 1)) {
-		int prev = ((dec->short_term_frames | dec->long_term_frames) >> dec->currPic & 1) ?
-			dec->FrameNums[dec->currPic] : dec->PrevRefFrameNum[non_base_view];
+		int prev = dec->currPic_marked ? dec->FrameNums[dec->currPic] : dec->PrevRefFrameNum[non_base_view];
 		dep_corrupt = ((frame_num - prev - 1) & FrameNumMask) > 0;
 	}
 
@@ -1964,8 +1992,7 @@ int ADD_VARIANT(parse_slice_layer_without_partitioning)(Edge264MvcDecoder *dec, 
 
 	// detect the start of a new frame (7.4.1.2.4)
 	int frame_num_changed = dec->currPic >= 0 && frame_num != (dec->FrameNum & FrameNumMask);
-	int nal_ref_idc_changed = dec->currPic >= 0 && (dec->nal_ref_idc > 0) !=
-		((dec->short_term_frames | dec->long_term_frames) >> dec->currPic & 1);
+	int nal_ref_idc_changed = dec->currPic >= 0 && (dec->nal_ref_idc > 0) != dec->currPic_marked;
 	if (dep_corrupt && (frame_num_changed || nal_ref_idc_changed))
 		return print_dec(dec, "  decode_NAL_result: %s\n", EBADMSG);
 	if (dep_continuation && (frame_num_changed || nal_ref_idc_changed ||
@@ -2253,6 +2280,7 @@ int ADD_VARIANT(parse_slice_layer_without_partitioning)(Edge264MvcDecoder *dec, 
 	}
 	
 	// each slice has the initial references state of the previous frame
+	dec->currPic_marked = 0;
 	dec->short_term_frames = dec->prev_short_term_frames & same_views;
 	dec->long_term_frames = dec->prev_long_term_frames & same_views;
 	dec->LongTermFrameIdx_v[0] = dec->prev_LongTermFrameIdx_v[0];

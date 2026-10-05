@@ -142,3 +142,9 @@ Without the fix this line FAILs.
 ## `intra8x8_hd_slices.264`
 
 Guards the samples intra 8x8 Horizontal_Down prediction reads. Four High profile IDR pictures of 8x4 macroblocks, one slice per macroblock, each macroblock Intra_8x8 without residual: its first three 8x8 blocks predicted DC, its bottom-right one Horizontal_Down (`tests/gen_intra8x8_hd_slices.py`). Horizontal_Down uses no sample right of its block (8.3.2.2.8), but its load reached the seven samples there, in the next macroblock, which another worker thread decodes at the same time as the next slice - a data race reported by ThreadSanitizer (the samples were never used, so the output did not change). The CI ThreadSanitizer job decodes it with 8 worker threads through `tests/slice_overrun_check.c`. The hash is anchored to the JM reference decoder, which FFmpeg matches.
+
+## `long_term_overflow.264`
+
+Guards the reference marking of a stream that holds more references than `max_num_ref_frames`. A 32x32 stream allowing one reference picture, whose IDR picture is marked long-term, so the sliding window (8.2.5.3) never retires it; each of the following reference P pictures then adds a short-term reference beside it (`tests/gen_long_term_overflow.py`). The two P pictures of I_PCM samples come in two slices each, and a P picture of skipped macroblocks after each shows which reference was kept. Such a stream is not conformant; it aborted on a C.4.5 assert, and a release build kept one reference more than the stream declared. One reference is now discarded as FFmpeg does - here the current picture, the only short-term one - and the picture still counts as a reference for frame_num and for telling its slices apart from the next picture. The hash is anchored to FFmpeg. The JM reference decoder rejects the stream.
+
+Without the fix this line FAILs.
