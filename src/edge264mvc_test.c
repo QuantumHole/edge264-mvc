@@ -191,7 +191,8 @@ static int receive_frame(void) {
 	holding_out = res == EDGE264MVC_OK;
 	return to_errno(res);
 }
-static const uint8_t *conf[2];
+static const uint8_t *conf[2]; // the next frame of each view in its reference YUV
+static const uint8_t *conf_end[2]; // the end of each reference YUV
 static SDL_Window *window;
 static SDL_Renderer *renderer;
 static SDL_Texture *texture0, *texture1;
@@ -318,7 +319,15 @@ static int check_frame()
 	int cropl = out.crop[3];
 	int pic_width_in_mbs = (cropl + out.width_Y + cropr) >> 4;
 	int pic_height_in_mbs = (cropt + out.height_Y + cropb) >> 4;
+	size_t frame_bytes =
+		(size_t)(out.bit_depth_Y == 8 ? out.width_Y : out.width_Y << 1) * out.height_Y +
+		(size_t)(out.bit_depth_C == 8 ? out.width_C : out.width_C << 1) * out.height_C * 2;
 	for (int view = 0; view < 2 && conf[view] != NULL; view += 1) {
+		if ((size_t)(conf_end[view] - conf[view]) < frame_bytes) {
+			printf("More frames than the reference YUV%s holds\n", view ? " of the dependent view" : "");
+			moveup = "";
+			return -2;
+		}
 		int id = out.views[view].decode_order;
 		for (int row = 0; row < pic_height_in_mbs; row += 1) {
 			for (int col = 0; col < pic_width_in_mbs; col += 1) {
@@ -367,9 +376,7 @@ static int check_frame()
 				}
 			}
 		}
-		conf[view] +=
-			(out.bit_depth_Y == 8 ? out.width_Y : out.width_Y << 1) * out.height_Y +
-			(out.bit_depth_C == 8 ? out.width_C : out.width_C << 1) * out.height_C * 2;
+		conf[view] += frame_bytes;
 	}
 	return 0;
 }
@@ -422,7 +429,7 @@ static int keep_decoding(int res)
 // set when the progress guard of a decode loop gave up on the stream
 static int stalled;
 
-static int finish_decode_result(int res, const uint8_t *end1)
+static int finish_decode_result(int res)
 {
 	release_out();
 	edge264mvc_flush(d);
@@ -437,7 +444,16 @@ static int finish_decode_result(int res, const uint8_t *end1)
 		fprintf(stderr, "edge264mvc_test: skipped %u corrupt NAL unit(s); output may show brief artefacts\n", skipped_corrupt);
 		skipped_corrupt = 0;
 	}
-	if (res == ENOBUFS || (res == ENODATA && conf[0] != NULL && conf[0] != end1))
+	if (res == ENODATA) {
+		for (int view = 0; view < 2; view++) {
+			if (conf[view] != NULL && conf[view] != conf_end[view]) {
+				printf("Fewer frames than the reference YUV%s holds\n", view ? " of the dependent view" : "");
+				moveup = "";
+				res = EBADMSG;
+			}
+		}
+	}
+	if (res == ENOBUFS)
 		res = EBADMSG;
 	return res;
 }
@@ -447,7 +463,7 @@ static size_t stream_find_start_code(const uint8_t *data, size_t start, size_t e
 // A regular file is split into NALs by the rules of the stream input
 // (stream_next_nal): only zero bytes before the first start code, and a NAL
 // after every start code, so that both inputs agree on a damaged byte stream.
-static int decode_mapped_input(const uint8_t *buf, const uint8_t *end0, const uint8_t *end1, const char *name, int *quit)
+static int decode_mapped_input(const uint8_t *buf, const uint8_t *end0, const char *name, int *quit)
 {
 	size_t len = end0 - buf, delimiter = 0;
 	size_t pos = buf != NULL ? stream_find_start_code(buf, 0, len, &delimiter) : SIZE_MAX;
@@ -492,7 +508,7 @@ static int decode_mapped_input(const uint8_t *buf, const uint8_t *end0, const ui
 		stuck = (res == ENOBUFS && drained == 0) ? stuck + 1 : 0;
 		if (stuck > 64) { at_end = 1; stuck = 0; stalled = 1; } // give up and end the stream
 	} while (keep_decoding(res));
-	return finish_decode_result(res, end1);
+	return finish_decode_result(res);
 }
 
 #define STREAM_CHUNK ((size_t)64 * 1024)
@@ -667,13 +683,13 @@ static void stream_consume(StreamBuffer *s, size_t size)
 	memset(s->data + s->len, 0, STREAM_PAD);
 }
 
-static int decode_stream_input(int fd, const char *name, const uint8_t *end1, int *quit)
+static int decode_stream_input(int fd, const char *name, int *quit)
 {
 	StreamBuffer s = {.fd = fd};
 	if (stream_reserve(&s, STREAM_CHUNK)) {
 		perror(name);
 		*quit = 1;
-		return finish_decode_result(EBADMSG, end1);
+		return finish_decode_result(EBADMSG);
 	}
 	const uint8_t *nal = NULL, *end = NULL;
 	size_t consume = 0;
@@ -722,7 +738,7 @@ static int decode_stream_input(int fd, const char *name, const uint8_t *end1, in
 		}
 	} while (keep_decoding(res));
 	free(s.alloc);
-	return finish_decode_result(res, end1);
+	return finish_decode_result(res);
 }
 
 
@@ -780,7 +796,8 @@ static int decode_file(const char *name0)
 		}
 		const uint8_t *buf0 = v0;
 		const uint8_t *end0 = v0 != NULL ? v0 + GetFileSize(f0, NULL) : NULL;
-		const uint8_t *end1 = v1 != NULL ? v1 + GetFileSize(f1, NULL) : NULL;
+		conf_end[0] = v1 != NULL ? v1 + GetFileSize(f1, NULL) : NULL;
+		conf_end[1] = v2 != NULL ? v2 + GetFileSize(f2, NULL) : NULL;
 	#else
 		int fd0 = -1, fd1 = -1, fd2 = -1;
 		int stream_input = input_stdin;
@@ -817,7 +834,8 @@ static int decode_file(const char *name0)
 		}
 		const uint8_t *buf0 = mm0 != MAP_FAILED ? mm0 : NULL;
 		const uint8_t *end0 = mm0 != MAP_FAILED ? mm0 + st0.st_size : NULL;
-		const uint8_t *end1 = mm1 != MAP_FAILED ? mm1 + st1.st_size : NULL;
+		conf_end[0] = mm1 != MAP_FAILED ? mm1 + st1.st_size : NULL;
+		conf_end[1] = mm2 != MAP_FAILED ? mm2 + st2.st_size : NULL;
 	#endif
 	
 	// print the success counts
@@ -829,8 +847,8 @@ static int decode_file(const char *name0)
 		moveup = "\e[A\e[K";
 		
 		// decode the entire file and FAIL on any error
-		int res = stream_input ? decode_stream_input(fd0, name0, end1, &quit) :
-			decode_mapped_input(buf0, end0, end1, name0, &quit);
+		int res = stream_input ? decode_stream_input(fd0, name0, &quit) :
+			decode_mapped_input(buf0, end0, name0, &quit);
 		// FIXME interrupt all threads before closing the files!
 		
 		// print the file that was decoded
