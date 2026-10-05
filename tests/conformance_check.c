@@ -397,8 +397,15 @@ static int do_run(const char *manifest, const char *dir) {
 		char name[512], hb[64], hd[64];
 		int frames, stereo, paced = 0;
 		int nf = sscanf(line, "%511s %d %d %63s %63s %d", name, &frames, &stereo, hb, hd, &paced);
-		if (nf < 5)
+		if (nf < 5) {
+			if (line[strspn(line, " \t\r")] == '\0')
+				continue; // a blank line
+			// a line that does not parse would drop its fixture without a word
+			printf(RED "FAIL" RESET " malformed manifest line: %s\n", line);
+			total++;
+			failed++;
 			continue;
+		}
 		if (nf < 6)
 			paced = 0;
 		// CONFORMANCE_PACED holds every fixture to its values under both consumer

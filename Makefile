@@ -437,6 +437,7 @@ else
 	$(Q)$(MAKE) --no-print-directory check-partial-receive
 	$(Q)$(MAKE) --no-print-directory check-harness-stall
 	$(Q)$(MAKE) --no-print-directory check-test-results
+	$(Q)$(MAKE) --no-print-directory check-harness-manifest
 endif
 
 edge264mvc_check$(EXE): src/edge264mvc_check.c edge264mvc.h src/edge264mvc_internal.h $(LIBNAME)
@@ -633,6 +634,20 @@ ifeq ($(OS),linux)
 	$(Q)$(TIMEOUT) ./edge264mvc_test_stall tests/conformance/manifest.txt > /dev/null 2>&1; \
 	  test $$? -eq 1 || { echo "edge264mvc_test results check FAILED (a file without the .264 suffix did not FAIL)"; exit 1; }
 	$(Q)echo "edge264mvc_test results check PASS"
+endif
+
+# A manifest line conformance_check or liveness_check cannot read (a column
+# missing, a count that is not a number) must fail the run, not drop its fixture.
+.PHONY: check-harness-manifest
+check-harness-manifest: conformance_check$(EXE) liveness_check$(EXE)
+ifneq ($(OS),wasm)
+	$(Q)printf '2d-synthetic/crop_top_left 3 0\n' > harness_manifest.txt; \
+	  ./conformance_check$(EXE) run harness_manifest.txt tests/conformance > /dev/null; status=$$?; \
+	  printf 'self_reference three\n' > harness_manifest.txt; \
+	  ./liveness_check$(EXE) run harness_manifest.txt tests/liveness > /dev/null; status2=$$?; \
+	  rm -f harness_manifest.txt; \
+	  test $$status -eq 1 -a $$status2 -eq 1 || { echo "harness manifest check FAILED (a malformed line passed)"; exit 1; }
+	$(Q)echo "harness manifest check PASS"
 endif
 
 .PHONY: check-partial-receive

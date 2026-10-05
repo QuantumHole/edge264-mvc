@@ -183,8 +183,16 @@ static int do_run(const char *manifest, const char *dir) {
 			continue;
 		char name[512];
 		int expected;
-		if (sscanf(line, "%511s %d", name, &expected) != 2)
+		if (sscanf(line, "%511s %d", name, &expected) != 2) {
+			if (line[strspn(line, " \t\r\n")] == '\0')
+				continue; // a blank line
+			// a line that does not parse would drop its fixture without a word
+			line[strcspn(line, "\r\n")] = '\0';
+			printf(RED "FAIL" RESET " malformed manifest line: %s\n", line);
+			total++;
+			failed++;
 			continue;
+		}
 		total++;
 		char path[4096];
 		snprintf(path, sizeof(path), "%s/%s.264", dir, name);
