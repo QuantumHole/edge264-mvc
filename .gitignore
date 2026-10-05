@@ -40,6 +40,7 @@
 !tests/gen_reversed_slices.py
 !tests/gen_reordered_damaged_slices.py
 !tests/gen_overrun_reference.py
+!tests/gen_plane_without_d.py
 !tests/conformance_check.c
 !tests/conformance
 !tests/conformance/2d

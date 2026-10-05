@@ -723,11 +723,14 @@ static always_inline void CAFUNC(parse_coded_block_pattern, const uint8_t *map_m
  */
 static inline void CAFUNC(parse_intra_chroma_pred_mode)
 {
-	static const int8_t IntraChromaModes[4][4] = {
-		{IC8x8_DC_8, IC8x8_DC_A_8, IC8x8_DC_B_8, IC8x8_DC_AB_8},
-		{IC8x8_H_8 , IC8x8_DC_A_8, IC8x8_H_8  , IC8x8_DC_AB_8},
-		{IC8x8_V_8 , IC8x8_V_8  , IC8x8_DC_B_8, IC8x8_DC_AB_8},
-		{IC8x8_P_8 , IC8x8_DC_A_8, IC8x8_DC_B_8, IC8x8_DC_AB_8},
+	// indexed with the availability of A, B and D (bit 2), since Plane prediction
+	// also reads p[-1,-1] (8.3.4.4): without D it falls back to DC from A and B,
+	// as it does without A or B
+	static const int8_t IntraChromaModes[4][8] = {
+		{IC8x8_DC_8, IC8x8_DC_A_8, IC8x8_DC_B_8, IC8x8_DC_AB_8, IC8x8_DC_8, IC8x8_DC_A_8, IC8x8_DC_B_8, IC8x8_DC_AB_8},
+		{IC8x8_H_8 , IC8x8_DC_A_8, IC8x8_H_8  , IC8x8_DC_AB_8, IC8x8_H_8 , IC8x8_DC_A_8, IC8x8_H_8  , IC8x8_DC_AB_8},
+		{IC8x8_V_8 , IC8x8_V_8  , IC8x8_DC_B_8, IC8x8_DC_AB_8, IC8x8_V_8 , IC8x8_V_8  , IC8x8_DC_B_8, IC8x8_DC_AB_8},
+		{IC8x8_P_8 , IC8x8_DC_A_8, IC8x8_DC_B_8, IC8x8_DC_AB_8, IC8x8_DC_8, IC8x8_DC_A_8, IC8x8_DC_B_8, IC8x8_DC_AB_8},
 	};
 	
 	// Do not optimise too hard to keep the code understandable here.
@@ -743,7 +746,7 @@ static inline void CAFUNC(parse_intra_chroma_pred_mode)
 			mb->f.intra_chroma_pred_mode_non_zero = (mode > 0);
 		#endif
 		log_mb(ctx, "%sintra_chroma_pred_mode: %u\n", ctx->log_indent, mode);
-		decode_intraChroma(ctx->samples_mb[1], ctx->t.stride[1] >> 1, IntraChromaModes[mode][ctx->unavail4x4[0] & 3], ctx->t.samples_clip_v[1]);
+		decode_intraChroma(ctx->samples_mb[1], ctx->t.stride[1] >> 1, IntraChromaModes[mode][(ctx->unavail4x4[0] & 3) | (ctx->unavail4x4[0] >> 1 & 4)], ctx->t.samples_clip_v[1]);
 	}
 }
 
@@ -877,14 +880,16 @@ static noinline void CAFUNC(parse_I_mb, int mb_type_or_ctxIdx)
 		#endif
 		
 		// decode the samples before parsing residuals
-		static const int8_t Intra16x16Modes[4][4] = {
-			{I16x16_V_8 , I16x16_V_8  , I16x16_DC_B_8, I16x16_DC_AB_8},
-			{I16x16_H_8 , I16x16_DC_A_8, I16x16_H_8  , I16x16_DC_AB_8},
-			{I16x16_DC_8, I16x16_DC_A_8, I16x16_DC_B_8, I16x16_DC_AB_8},
-			{I16x16_P_8 , I16x16_DC_A_8, I16x16_DC_B_8, I16x16_DC_AB_8},
+		// indexed with the availability of A, B and D (bit 2), as Plane prediction
+		// also reads p[-1,-1] (8.3.3.4), falling back to DC like the chroma modes
+		static const int8_t Intra16x16Modes[4][8] = {
+			{I16x16_V_8 , I16x16_V_8  , I16x16_DC_B_8, I16x16_DC_AB_8, I16x16_V_8 , I16x16_V_8  , I16x16_DC_B_8, I16x16_DC_AB_8},
+			{I16x16_H_8 , I16x16_DC_A_8, I16x16_H_8  , I16x16_DC_AB_8, I16x16_H_8 , I16x16_DC_A_8, I16x16_H_8  , I16x16_DC_AB_8},
+			{I16x16_DC_8, I16x16_DC_A_8, I16x16_DC_B_8, I16x16_DC_AB_8, I16x16_DC_8, I16x16_DC_A_8, I16x16_DC_B_8, I16x16_DC_AB_8},
+			{I16x16_P_8 , I16x16_DC_A_8, I16x16_DC_B_8, I16x16_DC_AB_8, I16x16_DC_8, I16x16_DC_A_8, I16x16_DC_B_8, I16x16_DC_AB_8},
 		};
 		mbc->Intra4x4PredMode_v = (i8x16){2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2};
-		decode_intra16x16(ctx->samples_mb[0], ctx->t.stride[0], Intra16x16Modes[mode][ctx->unavail4x4[0] & 3], ctx->t.samples_clip_v[0]); // FIXME 4:4:4
+		decode_intra16x16(ctx->samples_mb[0], ctx->t.stride[0], Intra16x16Modes[mode][(ctx->unavail4x4[0] & 3) | (ctx->unavail4x4[0] >> 1 & 4)], ctx->t.samples_clip_v[0]); // FIXME 4:4:4
 		CACALL(parse_intra_chroma_pred_mode);
 		CAJUMP(parse_Intra16x16_residual);
 		
