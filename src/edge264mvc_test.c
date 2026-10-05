@@ -417,10 +417,20 @@ static int keep_decoding(int res)
 	return res == 0 || res == ENOBUFS || (res == ENOTSUP && skip_unsupported);
 }
 
+// set when the progress guard of a decode loop gave up on the stream
+static int stalled;
+
 static int finish_decode_result(int res, const uint8_t *end1)
 {
 	release_out();
 	edge264mvc_flush(d);
+	// every round of EDGE264MVC_AGAIN must make progress, so a guard that fired
+	// marks a decoder fault: the stream was cut short, whatever came out of it
+	if (stalled) {
+		fprintf(stderr, "edge264mvc_test: send_nal kept returning EDGE264MVC_AGAIN with no frame to receive; the rest of the stream was dropped\n");
+		stalled = 0;
+		res = EBADMSG;
+	}
 	if (skipped_corrupt > 0) {
 		fprintf(stderr, "edge264mvc_test: skipped %u corrupt NAL unit(s); output may show brief artefacts\n", skipped_corrupt);
 		skipped_corrupt = 0;
@@ -451,9 +461,10 @@ static int decode_mapped_input(const uint8_t *nal, const uint8_t *end0, const ui
 		// before reaching the buf>=end path that would set `flushing`, so the
 		// sentinel never arms it. Set `flushing` here, then force the sentinel
 		// (nal = end0). Inert on well-formed streams (every ENOBUFS there drains
-		// at least one frame, resetting the counter).
+		// at least one frame, resetting the counter); when it fires, the file
+		// FAILs (see finish_decode_result).
 		stuck = (res == ENOBUFS && drained == 0) ? stuck + 1 : 0;
-		if (stuck > 64) { nal = end0; stuck = 0; } // give up and end the stream
+		if (stuck > 64) { nal = end0; stuck = 0; stalled = 1; } // give up and end the stream
 	} while (keep_decoding(res));
 	return finish_decode_result(res, end1);
 }
@@ -685,6 +696,7 @@ static int decode_stream_input(int fd, const char *name, const uint8_t *end1, in
 			consume = 0;
 			current = 1;
 			stuck = 0;
+			stalled = 1;
 		}
 	} while (keep_decoding(res));
 	free(s.alloc);

@@ -1,6 +1,6 @@
 // A stand-in for the decoder library that never makes progress, to check that
-// tests/conformance_check.c reports a stalled decoder as a failure instead of
-// hanging (make check-harness-stall). By default every NAL is answered with
+// tests/conformance_check.c and edge264mvc_test report a stalled decoder as a
+// failure instead of hanging or passing (make check-harness-stall). By default every NAL is answered with
 // EDGE264MVC_AGAIN and no frame is ever ready; with STALL_STUB_BLOCK set,
 // send_nal blocks forever, as a deadlocked decoder would.
 
@@ -46,6 +46,8 @@ int edge264mvc_receive_frame(Edge264MvcDecoder *dec, Edge264MvcFrame *frame) {
 }
 
 void edge264mvc_release_frame(Edge264MvcDecoder *dec, const Edge264MvcFrame *frame) {}
+
+void edge264mvc_flush(Edge264MvcDecoder *dec) {}
 
 void edge264mvc_close(Edge264MvcDecoder **decoder) {
 	free(*decoder);

@@ -404,7 +404,7 @@ uninstall:
 # ==============================================================================
 .PHONY: clean clear
 clean clear:
-	$(Q)rm -f edge264mvc_test edge264mvc_test.exe edge264mvc_test.js edge264mvc_test.wasm edge264mvc_check edge264mvc_check.exe edge264mvc_check.js edge264mvc_check.wasm conformance_check conformance_check.exe liveness_check liveness_check.exe asan_check asan_check.exe api_check api_check.exe multi_decoder_check multi_decoder_check.exe slice_overrun_check slice_overrun_check.exe open_failure_check open_failure_check.exe alloc_failure_check alloc_failure_check.exe partial_receive_check partial_receive_check.exe conformance_check_stall static_plugin.so static_plugin.dll fuzz_decode edge264*.o libedge264mvc.a edge264mvc.$(MAJOR).dll libedge264mvc.dll.a edge264mvc.js edge264mvc.wasm libedge264mvc.$(MAJOR).dylib libedge264mvc-universal.$(MAJOR).dylib libedge264mvc.so libedge264mvc.so.$(MAJOR)
+	$(Q)rm -f edge264mvc_test edge264mvc_test.exe edge264mvc_test.js edge264mvc_test.wasm edge264mvc_check edge264mvc_check.exe edge264mvc_check.js edge264mvc_check.wasm conformance_check conformance_check.exe liveness_check liveness_check.exe asan_check asan_check.exe api_check api_check.exe multi_decoder_check multi_decoder_check.exe slice_overrun_check slice_overrun_check.exe open_failure_check open_failure_check.exe alloc_failure_check alloc_failure_check.exe partial_receive_check partial_receive_check.exe conformance_check_stall edge264mvc_test_stall static_plugin.so static_plugin.dll fuzz_decode edge264*.o libedge264mvc.a edge264mvc.$(MAJOR).dll libedge264mvc.dll.a edge264mvc.js edge264mvc.wasm libedge264mvc.$(MAJOR).dylib libedge264mvc-universal.$(MAJOR).dylib libedge264mvc.so libedge264mvc.so.$(MAJOR)
 
 
 # ==============================================================================
@@ -594,7 +594,8 @@ alloc_failure_check: tests/alloc_failure_check.c edge264mvc.h $(LIBNAME)
 # conformance_check against a decoder that never makes progress
 # (tests/stall_stub.c) must fail rather than hang: on AGAIN without a frame in
 # both consumer models, and on a forked paced run that never answers, at its
-# deadline. Linux only, as the stub blocks with pause().
+# deadline. edge264mvc_test must count such a stream as a FAIL. Linux only, as
+# the stub blocks with pause().
 .PHONY: check-harness-stall
 check-harness-stall:
 ifeq ($(OS),linux)
@@ -605,6 +606,11 @@ ifeq ($(OS),linux)
 	  out=$$(STALL_STUB_BLOCK=1 CONFORMANCE_TIMEOUT=2 $(TIMEOUT) ./conformance_check_stall run conformance_check_stall.txt tests/conformance); \
 	  status=$$?; rm -f conformance_check_stall.txt; \
 	  test $$status -eq 1 && echo "$$out" | grep -q 'no result within' || { echo "harness stall check FAILED (deadlock)"; exit 1; }
+	$(Q)$(CC) -I. src/edge264mvc_test.c tests/stall_stub.c $(CPPFLAGS) $(CFLAGS) -o edge264mvc_test_stall
+	$(Q)$(TIMEOUT) ./edge264mvc_test_stall -s -y tests/conformance/2d/CABA3_Sony_C.264 > /dev/null 2>&1; \
+	  test $$? -eq 1 || { echo "harness stall check FAILED (edge264mvc_test passed a stalled file)"; exit 1; }
+	$(Q)$(TIMEOUT) ./edge264mvc_test_stall -s -y - < tests/conformance/2d/CABA3_Sony_C.264 > /dev/null 2>&1; \
+	  test $$? -eq 1 || { echo "harness stall check FAILED (edge264mvc_test passed a stalled stream input)"; exit 1; }
 	$(Q)echo "harness stall check PASS"
 endif
 
