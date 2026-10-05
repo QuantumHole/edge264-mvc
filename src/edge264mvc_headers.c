@@ -285,7 +285,10 @@ static int alloc_frame(Edge264MvcDecoder *dec, int id, int errno_on_fail) {
 }
 
 static void clear_decoder(Edge264MvcDecoder *dec) {
+	// frames received but not released yet keep their slots until released
+	uint32_t held = dec->output_frames & ~dec->to_get_frames;
 	memset((void *)dec + offsetof(Edge264MvcDecoder, nal_ref_idc), 0, offsetof(Edge264MvcDecoder, log_base_us) - offsetof(Edge264MvcDecoder, nal_ref_idc));
+	dec->output_frames = held;
 	dec->currPic = dec->basePic = -1;
 	dec->held_task = -1;
 	memset(dec->task_wait_pic, -1, sizeof(dec->task_wait_pic));
@@ -307,8 +310,11 @@ int ADD_VARIANT(parse_end_of_sequence)(Edge264MvcDecoder *dec, Edge264MvcUnrefCb
 		// (rather than the buf>=end drain) spun ENOBUFS on it. Set flushing so the
 		// unpaired-base valve fires and the tail is emitted; the next NAL clears the
 		// flag again (decode_nal), so a following sequence is unaffected.
+		// Only the frames the caller has yet to receive hold it back, not those
+		// it received and holds: they keep their slots across clear_decoder.
 		dec->flushing = 1;
-		if (bump_all_frames(dec))
+		bump_all_frames(dec);
+		if (dec->to_get_frames)
 			return ENOBUFS;
 		clear_decoder(dec);
 		ret = 0;
@@ -3238,16 +3244,20 @@ int ADD_VARIANT(parse_seq_parameter_set)(Edge264MvcDecoder *dec, Edge264MvcUnref
 			// must be output, so let get_frame emit an MVC base whose dependent view
 			// never comes (otherwise it holds the base, and this NAL returned ENOBUFS
 			// until the caller drained the whole stream). The next NAL clears the flag.
+			// Frames the caller received and holds do not hold it back either (see
+			// parse_end_of_sequence), and keep their buffers until released.
 			dec->flushing = 1;
-			if (bump_all_frames(dec))
+			bump_all_frames(dec);
+			if (dec->to_get_frames)
 				return ENOBUFS; // SPS should be reparsed after clearing frames, so we don't print it yet
 			clear_decoder(dec);
 			memcpy(&dec->out, &format, sizeof(format)); // GCC-14 crashes on dec->out = format
 			dec->plane_size_Y = format.stride_Y * height;
 			dec->plane_size_C = format.stride_C * (sps.chroma_format_idc == 1 ? height >> 1 : height);
 			dec->frame_flip_bits = 0;
+			dec->stale_frames |= dec->output_frames; // freed by return_frame
 			for (int i = 0; i < 32; i++) {
-				if (dec->samples_buffers[i] != NULL) {
+				if (dec->samples_buffers[i] != NULL && !(dec->stale_frames & 1u << i)) {
 					dec->free_cb(dec->samples_buffers[i], dec->mb_buffers[i], dec->alloc_arg);
 					dec->samples_buffers[i] = NULL;
 					dec->mb_buffers[i] = NULL;

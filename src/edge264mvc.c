@@ -294,10 +294,7 @@ static void flush_decoder(Edge264MvcDecoder *dec) {
 	if (dec->n_threads)
 		pthread_mutex_lock(&dec->lock);
 	flush_frames(dec);
-	// frames received but not released yet keep their slots until released
-	uint32_t held = dec->output_frames & ~dec->to_get_frames;
-	clear_decoder(dec);
-	dec->output_frames = held;
+	clear_decoder(dec); // frames received but not released yet stay valid
 	if (dec->n_threads)
 		pthread_mutex_unlock(&dec->lock);
 }
@@ -880,6 +877,15 @@ static void return_frame(Edge264MvcDecoder *dec, void *return_arg) {
 	if (dec->n_threads)
 		pthread_mutex_lock(&dec->lock);
 	dec->output_frames &= ~(size_t)return_arg;
+	// the buffers of a frame in a previous frame format are freed once released
+	// (see parse_seq_parameter_set)
+	for (uint32_t s = dec->stale_frames & (size_t)return_arg; s; s &= s - 1) {
+		int i = __builtin_ctz(s);
+		dec->free_cb(dec->samples_buffers[i], dec->mb_buffers[i], dec->alloc_arg);
+		dec->samples_buffers[i] = NULL;
+		dec->mb_buffers[i] = NULL;
+	}
+	dec->stale_frames &= ~(size_t)return_arg;
 	if (dec->n_threads)
 		pthread_mutex_unlock(&dec->lock);
 }

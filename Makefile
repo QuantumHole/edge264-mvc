@@ -514,8 +514,10 @@ endif
 TIMEOUT := $(if $(shell command -v timeout 2>/dev/null),timeout 90)
 
 # The promises of the public API itself (version, defaults, INVALID results,
-# END after send_end, a flush after the end, pts / user_data passthrough), on
-# one MVC and one 2D stream, single-threaded and with four worker threads.
+# END after send_end, a flush after the end, pts / user_data passthrough, a
+# caller holding its latest frame through an end of sequence and a change of
+# the frame size), on one MVC and one 2D stream, single-threaded and with four
+# worker threads.
 .PHONY: check-api
 check-api: api_check$(EXE)
 	$(Q)$(TIMEOUT) ./api_check$(EXE) tests/conformance/mvc/MVCDS-5.264 tests/conformance/2d/CABA3_Sony_C.264

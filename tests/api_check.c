@@ -3,12 +3,16 @@
 // The other harnesses decode streams through the API; this one checks the
 // promises the API itself makes to a caller: the version and the defaults,
 // the INVALID results, the end of a stream (END after send_end, and END
-// again), a flush after the end followed by the same stream again, and the
-// pts / user_data passthrough. It uses one committed MVC stream and one 2D
-// stream, each single-threaded and with EDGE264MVC_THREADS worker threads.
-// The struct layouts are checked when it is compiled.
+// again), a flush after the end followed by the same stream again, the
+// pts / user_data passthrough, and a caller that holds its latest frame
+// while it sends the next NALs - through an end of sequence and a change of
+// the frame size. It uses one committed MVC stream and one 2D stream, each
+// single-threaded and with EDGE264MVC_THREADS worker threads. The struct
+// layouts are checked when it is compiled.
 //
-// Usage: api_check <stream.264>...
+// Usage: api_check <stream.264>... (the held-frame check uses the last stream,
+// an end of sequence, the last stream again, then the first one, which must
+// differ from it in frame size)
 
 #include <stddef.h>
 #include <stdint.h>
@@ -142,6 +146,90 @@ static void check_stream(const char *path, int n_threads) {
 	free(buf);
 }
 
+static uint64_t hash_frame(const Edge264MvcFrame *f) {
+	uint64_t h = 14695981039346656037ull;
+	for (int v = 0; v < 2; v++) {
+		for (int p = 0; p < 3 && f->views[v].planes[0] != NULL; p++) {
+			int width = p ? f->width_C : f->width_Y, height = p ? f->height_C : f->height_Y;
+			int stride = p ? f->stride_C : f->stride_Y;
+			for (int y = 0; y < height; y++)
+				for (int x = 0; x < width; x++)
+					h = (h ^ f->views[v].planes[p][(size_t)y * stride + x]) * 1099511628211ull;
+		}
+	}
+	return h;
+}
+
+// A caller showing the latest frame keeps it until the next one comes, while
+// it sends the following NALs. That must not block an end of sequence or a
+// change of the frame size (frames held by the caller only limit how far the
+// decoder runs ahead), and the held frame must stay as it was until released.
+static void check_held_frame(const char *path_a, const char *path_b, int n_threads) {
+	size_t size_a = 0, size_b = 0;
+	uint8_t *a = load_file(path_a, &size_a), *b = load_file(path_b, &size_b);
+	static const uint8_t end_of_seq[] = {0, 0, 1, 0x0b};
+	uint8_t *buf = (a && b) ? malloc(size_a * 2 + sizeof(end_of_seq) + size_b) : NULL;
+	CHECK(buf != NULL, "cannot read %s and %s", path_a, path_b);
+	Edge264MvcSettings settings;
+	edge264mvc_default_settings(&settings);
+	settings.n_threads = n_threads;
+	Edge264MvcDecoder *dec = NULL;
+	Output oa, ob;
+	if (buf != NULL && edge264mvc_open(&dec, &settings) == EDGE264MVC_OK) {
+		decode_stream(dec, a, size_a, &oa);
+		edge264mvc_flush(dec);
+		decode_stream(dec, b, size_b, &ob);
+		edge264mvc_close(&dec);
+	}
+	if (buf == NULL || edge264mvc_open(&dec, &settings) != EDGE264MVC_OK) {
+		free(a), free(b), free(buf);
+		return;
+	}
+	size_t size = 0;
+	memcpy(buf, a, size_a), size += size_a;
+	memcpy(buf + size, end_of_seq, sizeof(end_of_seq)), size += sizeof(end_of_seq);
+	memcpy(buf + size, a, size_a), size += size_a;
+	memcpy(buf + size, b, size_b), size += size_b;
+	Edge264MvcFrame held, f;
+	uint64_t held_hash = 0;
+	int holding = 0, frames = 0, stuck = 0, changed = 0;
+	for (size_t pos = edge264mvc_find_start_code(buf, size), next; pos < size && !stuck; pos = next) {
+		size_t start = pos + 3;
+		next = start + edge264mvc_find_start_code(buf + start, size - start);
+		for (int rounds = 0; edge264mvc_send_nal(dec, buf + start, next - start, 0, 0) == EDGE264MVC_AGAIN; rounds++) {
+			if (rounds == 64) {
+				stuck = 1;
+				break;
+			}
+			while (edge264mvc_receive_frame(dec, &f) == EDGE264MVC_OK) {
+				if (holding) {
+					changed += hash_frame(&held) != held_hash;
+					edge264mvc_release_frame(dec, &held);
+				}
+				held = f, held_hash = hash_frame(&f), holding = 1, frames++;
+			}
+		}
+	}
+	edge264mvc_send_end(dec);
+	while (edge264mvc_receive_frame(dec, &f) == EDGE264MVC_OK) {
+		if (holding) {
+			changed += hash_frame(&held) != held_hash;
+			edge264mvc_release_frame(dec, &held);
+		}
+		held = f, held_hash = hash_frame(&f), holding = 1, frames++;
+	}
+	if (holding) {
+		changed += hash_frame(&held) != held_hash;
+		edge264mvc_release_frame(dec, &held);
+	}
+	CHECK(!stuck, "%s (%d threads): send_nal returned AGAIN for good while the caller held a frame", path_a, n_threads);
+	CHECK(stuck || frames == oa.frames * 2 + ob.frames, "%s, end of sequence, %s again, then %s (%d threads): %d frames instead of %d",
+		path_a, path_a, path_b, n_threads, frames, oa.frames * 2 + ob.frames);
+	CHECK(changed == 0, "%s (%d threads): %d held frames changed before they were released", path_a, n_threads, changed);
+	edge264mvc_close(&dec);
+	free(a), free(b), free(buf);
+}
+
 int main(int argc, char *argv[]) {
 	if (argc < 2) {
 		fprintf(stderr, "Usage: %s <stream.264>...\n", argv[0]);
@@ -179,6 +267,10 @@ int main(int argc, char *argv[]) {
 	for (int i = 1; i < argc; i++) {
 		check_stream(argv[i], 1);
 		check_stream(argv[i], threads);
+	}
+	if (argc > 2) {
+		check_held_frame(argv[argc - 1], argv[1], 1);
+		check_held_frame(argv[argc - 1], argv[1], threads);
 	}
 	if (failures) {
 		printf(RED "%d API contract checks FAILED" RESET "\n", failures);

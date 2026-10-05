@@ -447,6 +447,7 @@ struct Edge264MvcDecoder {
 	void *(*worker_loop)(void *);
 	uint8_t *samples_buffers[32];
 	Edge264MvcMacroblock *mb_buffers[32];
+	uint32_t stale_frames; // frames of a previous frame format held by the caller, freed when released
 	void *mbc_ring_allocs[17]; // per worker (thread_id + 1), see Edge264MvcMbCache
 	int32_t mbc_ring_sizes[17];
 	uint8_t *spec_rows_allocs[17]; // per worker, see spec_rows
