@@ -239,6 +239,43 @@ def check_empty_nal(exe: Path, fixture: Path, timeout: float) -> None:
         )
 
 
+def check_invalid_annexb(exe: Path, fixture: Path, timeout: float) -> None:
+    # A regular file (memory-mapped) and stdin (the incremental reader) must
+    # agree on a damaged Annex B byte stream: both reject it as a FAIL.
+    data = fixture.read_bytes()
+    middle = data.index(b"\x00\x00\x01", first_vcl_offset(data) + 3)
+    cases = (
+        ("empty NAL at the start", b"\x00\x00\x01" + data),
+        ("empty NAL in the middle", data[:middle] + b"\x00\x00\x01" + data[middle:]),
+        ("start code at the end", data + b"\x00\x00\x01"),
+        ("bytes before the first start code", b"\x07" + data),
+    )
+    with tempfile.TemporaryDirectory(prefix="edge264mvc-annexb-") as directory:
+        for name, damaged in cases:
+            path = Path(directory) / "damaged.264"
+            path.write_bytes(damaged)
+            for source, argv, stdin in (("file", str(path), None), ("stdin", "-", damaged)):
+                label = f"{fixture.name} {name} ({source})"
+                try:
+                    completed = subprocess.run(
+                        edge264mvc_argv(exe, argv, "-O", ("-s",)),
+                        input=stdin,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        timeout=timeout,
+                        check=False,
+                    )
+                except subprocess.TimeoutExpired as exc:
+                    raise RuntimeError(f"{label} timed out after {timeout:g}s") from exc
+                clean_stderr = re.sub(rb"\x1b\[[0-9;]*[A-Za-z]", b"", completed.stderr)
+                if not clean_stderr.splitlines() or b"1 FAIL" not in clean_stderr.splitlines()[-1]:
+                    raise RuntimeError(
+                        f"{label} was not rejected as invalid\n"
+                        f"stderr:\n{completed.stderr.decode(errors='replace')}"
+                    )
+    print(f"PASS {fixture.name}: damaged Annex B byte streams fail as files and on stdin")
+
+
 def first_vcl_offset(data: bytes) -> int:
     # Offset of the first VCL or prefix NAL start code (types 1, 5, 14, 20), i.e.
     # just past the leading parameter sets - a legal spot to splice filler in.
@@ -323,6 +360,7 @@ def main() -> int:
     exe = args.exe.resolve()
     have_fifo = hasattr(os, "mkfifo")
     check_empty_nal(exe, EMPTY_NAL_FIXTURE.path.resolve(), args.timeout)
+    check_invalid_annexb(exe, EMPTY_NAL_FIXTURE.path.resolve(), args.timeout)
     for fixture_spec in FIXTURES:
         fixture = fixture_spec.path.resolve()
         data = fixture.read_bytes()

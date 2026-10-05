@@ -176,11 +176,13 @@ static int to_errno(int res) {
 // Sends one NAL, or the end of the stream for an empty one.
 static int send_nal(const uint8_t *nal, const uint8_t *end) {
 	release_out();
-	if (nal >= end) {
-		edge264mvc_send_end(d);
-		return ENODATA;
-	}
 	return to_errno(edge264mvc_send_nal(d, nal, end - nal, 0, 0));
+}
+
+static int end_stream(void) {
+	release_out();
+	edge264mvc_send_end(d);
+	return ENODATA;
 }
 
 static int receive_frame(void) {
@@ -440,18 +442,42 @@ static int finish_decode_result(int res, const uint8_t *end1)
 	return res;
 }
 
-static int decode_mapped_input(const uint8_t *nal, const uint8_t *end0, const uint8_t *end1, int *quit)
+static size_t stream_find_start_code(const uint8_t *data, size_t start, size_t end, size_t *delimiter);
+
+// A regular file is split into NALs by the rules of the stream input
+// (stream_next_nal): only zero bytes before the first start code, and a NAL
+// after every start code, so that both inputs agree on a damaged byte stream.
+static int decode_mapped_input(const uint8_t *buf, const uint8_t *end0, const uint8_t *end1, const char *name, int *quit)
 {
-	nal += 3 + (nal[2] == 0); // skip the [0]001 delimiter
-	int res, stuck = 0;
+	size_t len = end0 - buf, delimiter = 0;
+	size_t pos = buf != NULL ? stream_find_start_code(buf, 0, len, &delimiter) : SIZE_MAX;
+	int invalid = pos == SIZE_MAX;
+	for (size_t i = 0; !invalid && i < pos; i++)
+		invalid = buf[i] != 0;
+	pos = invalid ? len : pos + delimiter;
+	int res, stuck = 0, at_end = 0;
 	y4m_started = 0; // one Y4M stream header per file
 	frames_out = 0;
 	do {
-		const uint8_t *end = nal < end0 ? nal + edge264mvc_find_start_code(nal, end0 - nal) : end0;
-		res = send_nal(nal, end);
+		size_t next = SIZE_MAX;
+		if (!at_end && !invalid) {
+			next = stream_find_start_code(buf, pos, len, &delimiter);
+			invalid = (next == SIZE_MAX ? len : next) == pos; // an empty NAL
+		}
+		if (invalid) {
+			fprintf(msg, "%s: invalid Annex B byte stream\n", name);
+			moveup = "";
+			res = EBADMSG;
+			break;
+		}
+		res = at_end ? end_stream() : send_nal(buf + pos, buf + (next == SIZE_MAX ? len : next));
 		int drained = drain_frames(&res, quit);
-		if (res != ENOBUFS)
-			nal = end + 3;
+		if (res != ENOBUFS && !at_end) {
+			if (next == SIZE_MAX)
+				at_end = 1;
+			else
+				pos = next + delimiter;
+		}
 		// Progress guard (the caller contract requires one so ENOBUFS cannot
 		// spin forever). A DPB that fills with unfinished pictures before
 		// end-of-stream rejects every further NAL with ENOBUFS while get_frame
@@ -459,12 +485,12 @@ static int decode_mapped_input(const uint8_t *nal, const uint8_t *end0, const ui
 		// get_frame's valve emit them. Feeding the flush sentinel (buf >= end) is
 		// not enough on its own - decode_NAL returns ENOBUFS at its fullness gate
 		// before reaching the buf>=end path that would set `flushing`, so the
-		// sentinel never arms it. Set `flushing` here, then force the sentinel
-		// (nal = end0). Inert on well-formed streams (every ENOBUFS there drains
+		// sentinel never arms it. Set `flushing` here, then end the stream
+		// (at_end). Inert on well-formed streams (every ENOBUFS there drains
 		// at least one frame, resetting the counter); when it fires, the file
 		// FAILs (see finish_decode_result).
 		stuck = (res == ENOBUFS && drained == 0) ? stuck + 1 : 0;
-		if (stuck > 64) { nal = end0; stuck = 0; stalled = 1; } // give up and end the stream
+		if (stuck > 64) { at_end = 1; stuck = 0; stalled = 1; } // give up and end the stream
 	} while (keep_decoding(res));
 	return finish_decode_result(res, end1);
 }
@@ -651,7 +677,7 @@ static int decode_stream_input(int fd, const char *name, const uint8_t *end1, in
 	}
 	const uint8_t *nal = NULL, *end = NULL;
 	size_t consume = 0;
-	int current = 0, res = 0, stuck = 0;
+	int current = 0, res = 0, stuck = 0, at_end = 0;
 	y4m_started = 0; // one Y4M stream header per file
 	frames_out = 0;
 	do {
@@ -673,26 +699,22 @@ static int decode_stream_input(int fd, const char *name, const uint8_t *end1, in
 				break;
 			}
 			if (next == 0) {
-				nal = s.data;
-				end = s.data;
+				at_end = 1;
 				consume = 0;
 			}
 			current = 1;
 		}
-		res = send_nal(nal, end);
+		res = at_end ? end_stream() : send_nal(nal, end);
 		int drained = drain_frames(&res, quit);
 		if (res != ENOBUFS) {
 			if (consume != 0)
 				stream_consume(&s, consume);
 			current = 0;
 		}
-		// Same forced end-of-stream drain as decode_mapped_input: the buf>=end
-		// sentinel alone cannot arm `flushing` (decode_NAL returns ENOBUFS at its
-		// fullness gate first), so set it here before feeding the sentinel.
+		// the same progress guard as in decode_mapped_input
 		stuck = (res == ENOBUFS && drained == 0) ? stuck + 1 : 0;
 		if (stuck > 64) { // give up and end the stream
-			nal = s.data;
-			end = s.data;
+			at_end = 1;
 			consume = 0;
 			current = 1;
 			stuck = 0;
@@ -808,7 +830,7 @@ static int decode_file(const char *name0)
 		
 		// decode the entire file and FAIL on any error
 		int res = stream_input ? decode_stream_input(fd0, name0, end1, &quit) :
-			decode_mapped_input(buf0, end0, end1, &quit);
+			decode_mapped_input(buf0, end0, end1, name0, &quit);
 		// FIXME interrupt all threads before closing the files!
 		
 		// print the file that was decoded
