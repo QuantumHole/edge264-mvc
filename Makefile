@@ -643,7 +643,9 @@ ifeq ($(OS),linux)
 endif
 
 # A manifest line conformance_check or liveness_check cannot read (a column
-# missing, a count that is not a number) must fail the run, not drop its fixture.
+# missing, a count that is not a number) must fail the run, not drop its fixture;
+# and conformance_check emit must report a base-view mismatch of an MVC stream
+# whatever the dependent view's verdict.
 .PHONY: check-harness-manifest
 check-harness-manifest: conformance_check$(EXE) liveness_check$(EXE)
 ifneq ($(OS),wasm)
@@ -653,6 +655,10 @@ ifneq ($(OS),wasm)
 	  ./liveness_check$(EXE) run harness_manifest.txt tests/liveness > /dev/null; status2=$$?; \
 	  rm -f harness_manifest.txt; \
 	  test $$status -eq 1 -a $$status2 -eq 1 || { echo "harness manifest check FAILED (a malformed line passed)"; exit 1; }
+	$(Q)rm -rf harness_emit && mkdir -p harness_emit/mvc && cp tests/conformance/mvc/MVCDS-5.264 harness_emit/mvc/ && \
+	  printf 'not the reference' > harness_emit/mvc/MVCDS-5.yuv && \
+	  out=$$(./conformance_check$(EXE) emit harness_emit mvc/MVCDS-5); rm -rf harness_emit; \
+	  echo "$$out" | grep -q 'check=BASE-MISMATCH dep_check=NOREF' || { echo "harness manifest check FAILED (emit hid a base-view mismatch)"; exit 1; }
 	$(Q)echo "harness manifest check PASS"
 endif
 

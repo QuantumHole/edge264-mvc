@@ -250,25 +250,25 @@ static int do_emit(const char *dir, const char *name, int paced) {
 	Result r = decode_all(buf, size, paced);
 	free(buf);
 
-	const char *check = "NOREF";
+	// the verdicts of the base and the dependent view against their reference
+	// YUVs, apart, so that neither hides the other
+	const char *check = "NOREF", *dep_check = "NOREF";
 	int found;
 	snprintf(path, sizeof(path), "%s/%s.yuv", dir, name);
 	Hash ref = hash_whole_file(path, &found);
 	if (found)
 		check = hash_eq(ref, r.base) ? "OK" : "BASE-MISMATCH";
-	if (found && r.stereo) {
+	if (r.stereo) {
 		snprintf(path, sizeof(path), "%s/%s.1.yuv", dir, name);
 		Hash refd = hash_whole_file(path, &found);
-		if (!found)
-			check = "NO-DEP-REF";
-		else if (!hash_eq(refd, r.dep))
-			check = "DEP-MISMATCH";
+		if (found)
+			dep_check = hash_eq(refd, r.dep) ? "OK" : "DEP-MISMATCH";
 	}
 
 	if (r.stereo)
-		printf("%s %d %d %016llx%016llx %016llx%016llx  # check=%s pair_err=%d order_err=%d\n",
+		printf("%s %d %d %016llx%016llx %016llx%016llx  # check=%s dep_check=%s pair_err=%d order_err=%d\n",
 			name, r.frames, 1, (unsigned long long)r.base.a, (unsigned long long)r.base.b,
-			(unsigned long long)r.dep.a, (unsigned long long)r.dep.b, check, r.pair_err, r.order_err);
+			(unsigned long long)r.dep.a, (unsigned long long)r.dep.b, check, dep_check, r.pair_err, r.order_err);
 	else
 		printf("%s %d %d %016llx%016llx -  # check=%s\n",
 			name, r.frames, 0, (unsigned long long)r.base.a, (unsigned long long)r.base.b, check);

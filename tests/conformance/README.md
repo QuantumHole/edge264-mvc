@@ -38,11 +38,16 @@ bitstreams only).
 
 ## How the expected hashes are anchored (and the one honest caveat)
 
-- **2D + MVC base view: anchored to the ITU reference.** The manifest was
-  generated with `conformance_check emit`, which decodes a stream and
-  verifies its base-view hash equals the hash of the official ITU
-  reference `.yuv` *before* accepting the line (it printed `check=OK`).
-  So every committed base-view hash equals the ITU reference output.
+- **2D: anchored to the ITU reference.** The manifest was generated with
+  `conformance_check emit`, which decodes a stream and verifies its hash
+  equals the hash of the official ITU reference `.yuv` *before* accepting
+  the line (it printed `check=OK`). So every committed 2D hash equals the
+  ITU reference output.
+- **MVC base view: anchored to FFmpeg.** The ITU MVC streams come without
+  reference YUVs here, so the base view of each committed MVC stream was
+  checked against FFmpeg's decode of it (FFmpeg decodes the base view of an
+  MVC stream and skips the dependent one): `emit` with that output as the
+  `.yuv` prints `check=OK` for all of them.
 - **MVC dependent view: pinned to the fork's validated output.** The ITU
   MVC area publishes no reference YUVs, and FFmpeg cannot decode the
   dependent view at all, so no external oracle exists. The dependent-view
@@ -68,6 +73,9 @@ above). For each stream:
     ./conformance_check emit conformance/2d  <name>   # prints a manifest line, self-checks vs <name>.yuv
     ./conformance_check emit conformance/mvc <name>
 
-Keep only lines whose comment reads `check=OK` (2D, anchored) or, for MVC,
-`pair_err=0 order_err=0`; copy the corresponding `.264` here and append
-the line (without the trailing `# ...` comment) to `manifest.txt`.
+Keep only lines whose comment reads `check=OK` - the base view, against the
+ITU reference or, for MVC streams without one, against FFmpeg's decode of the
+base view - and, for MVC, `pair_err=0 order_err=0`; `dep_check` is `NOREF`
+without a dependent-view reference (`<name>.1.yuv`).
+Copy the corresponding `.264` here and append the line (without the trailing
+`# ...` comment) to `manifest.txt`.
