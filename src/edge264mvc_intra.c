@@ -231,7 +231,7 @@
 		i8x16 v1 = ziplo8(loada32(p0 + stride), loada32(p0 + stride * 2));
 		i8x16 v2 = ziplo8(loada32(p0 + stride3), loada32(p4));
 		i8x16 v3 = ziplo8(loada32(p4 + stride), loada32(p4 + stride * 2));
-		i8x16 v4 = loada32(p4 + stride3 + 3);
+		i8x16 v4 = loadu32(p4 + stride3 + 3); // the samples left of the block, so only 1-aligned
 		i8x16 v5 = ziphi32(ziplo16(v0, v1), ziplo16(v2, v3));
 		i8x16 v6 = ziplo8(v4, v4);
 		return lowpass8(shrd128(v5, v6, 8), shrd128(v5, v6, 9), shrd128(v5, v6, 10));
