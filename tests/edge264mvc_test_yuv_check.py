@@ -4,7 +4,8 @@
 For each stream, the decoded frames (written with -o) serve as the reference
 YUV, which must PASS. Then a single sample is changed at a corner of the first
 or the last frame, in each plane, and every such change must FAIL - including
-the right-hand columns and the bottom rows, and the corners of a cropped picture.
+the right-hand columns and the bottom rows, and the corners of a cropped picture,
+whose differing macroblock is then printed in part.
 """
 
 import argparse
@@ -17,6 +18,7 @@ from pathlib import Path
 STREAMS = (
 	Path("tests/conformance/2d/BA1_Sony_D.264"), # 176x144
 	Path("tests/conformance/2d-synthetic/plane_without_d.264"), # 1920x1080, cropped from 1088
+	Path("tests/conformance/2d-synthetic/crop_top_left.264"), # 48x32, cropped by 8 on every side
 )
 
 
@@ -61,8 +63,9 @@ def main():
 						changed = bytearray(reference)
 						changed[pos] ^= 0x55
 						yuv.write_bytes(changed)
-						if run(exe, stream, args.timeout).returncode == 0:
-							print(f"FAIL {source}: a change at frame {frame}, plane {plane}, x {x}, y {y} still PASSes")
+						result = run(exe, stream, args.timeout).returncode
+						if result != 1: # FAIL, after printing the macroblock, rather than PASS or a crash
+							print(f"FAIL {source}: a change at frame {frame}, plane {plane}, x {x}, y {y} gives exit status {result}, not 1")
 							failures += 1
 			yuv.write_bytes(reference)
 	if failures:

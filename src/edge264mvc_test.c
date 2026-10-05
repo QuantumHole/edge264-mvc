@@ -337,20 +337,25 @@ static int check_frame()
 					if (invalid) {
 						printf("Erroneous macroblock (id %d, row %d, column %d, %s plane):\n",
 							id, row, col, (iYCbCr == 0) ? "Luma" : (iYCbCr == 1) ? "Cb" : "Cr");
+						// the samples of a macroblock cropped off the output are printed as
+						// blanks, and not read, since they lie outside the reference
 						for (int y = (row * 16 - cropt) >> sh_height; y < (row * 16 - cropt + 16) >> sh_height; y++) {
 							for (int x = (col * 16 - cropl) >> sh_width; x < (col * 16 - cropl + 16) >> sh_width; x++) {
 								// FIXME 16 bit
-								printf(y < 0 || y >= out.height_Y >> sh_height || x < 0 || x >= out.width_Y >> sh_width ? "    " :
-									p[y * stride + x] == q[y * (out.width_Y >> sh_width) + x] ? " %3d" :
-									RED " %3d" RESET, p[y * stride + x]);
+								if (y < 0 || y >= out.height_Y >> sh_height || x < 0 || x >= out.width_Y >> sh_width)
+									printf("    ");
+								else
+									printf(p[y * stride + x] == q[y * (out.width_Y >> sh_width) + x] ? " %3d" : RED " %3d" RESET, p[y * stride + x]);
 							}
 							printf("\n");
 						}
 						printf("Expected macroblock:\n");
 						for (int y = (row * 16 - cropt) >> sh_height; y < (row * 16 - cropt + 16) >> sh_height; y++) {
 							for (int x = (col * 16 - cropl) >> sh_width; x < (col * 16 - cropl + 16) >> sh_width; x++) {
-								printf(y < 0 || y >= out.height_Y >> sh_height || x < 0 || x >= out.width_Y >> sh_width ? "    " :
-									" %3d", q[y * (out.width_Y >> sh_width) + x]);
+								if (y < 0 || y >= out.height_Y >> sh_height || x < 0 || x >= out.width_Y >> sh_width)
+									printf("    ");
+								else
+									printf(" %3d", q[y * (out.width_Y >> sh_width) + x]);
 							}
 							printf("\n");
 						}
