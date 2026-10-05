@@ -117,7 +117,7 @@ typedef struct Edge264MvcSettings {
 	// each dimension up to a multiple of 16. 0 (default): 35651584 (8192x4352),
 	// the largest frame any level of H.264 allows.
 	int32_t max_frame_pixels;
-	Edge264MvcLogCb log_cb; // NULL (default): no trace
+	Edge264MvcLogCb log_cb; // NULL (default): no trace; needs a library built with the logs variant
 	void *log_arg;
 	int32_t log_mbs; // 1: include every macroblock in the trace (very large), 0 (default): headers only
 	uint8_t reserved[60]; // zero
@@ -180,7 +180,8 @@ EDGE264MVC_API void edge264mvc_default_settings(Edge264MvcSettings *settings);
 
 /**
  * Allocates a decoder with the given settings (NULL for the defaults).
- * Returns EDGE264MVC_OK, EDGE264MVC_NOMEM or EDGE264MVC_INVALID.
+ * Returns EDGE264MVC_OK, EDGE264MVC_NOMEM or EDGE264MVC_INVALID (a negative
+ * setting, or a log_cb when the library was built without the logs variant).
  */
 EDGE264MVC_API int edge264mvc_open(Edge264MvcDecoder **decoder, const Edge264MvcSettings *settings);
 

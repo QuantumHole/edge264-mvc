@@ -71,6 +71,8 @@ jobs:
       # GCC's UndefinedBehaviorSanitizer too, which unlike clang's checks the
       # vector lanes for signed overflow (the Makefile defines it with -fwrapv)
       - run: make clean && setarch -R make CC=gcc SANITIZE=undefined check
+      # the API of a library built without the logs variant, as released
+      - run: make clean && make VARIANTS= check-api
       # the SSE2 code of the x86-64 baseline object, which -march=native skips
       - run: make clean && make CC=clang SANITIZE=alignment CFLAGS=-march=x86-64 check-conformance
       - run: make clean

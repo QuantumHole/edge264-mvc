@@ -239,6 +239,8 @@ static void check_held_frame(const char *path_a, const char *path_b, int n_threa
 	free(a), free(b), free(buf);
 }
 
+static void discard_log(const char *line, void *arg) {}
+
 // Decodes a whole stream single-threaded with the given max_frame_pixels.
 static Output decode_with_limit(const uint8_t *buf, size_t size, int32_t max_frame_pixels) {
 	Output o = {};
@@ -304,6 +306,15 @@ int main(int argc, char *argv[]) {
 	CHECK(edge264mvc_receive_frame(dec, &frame) == EDGE264MVC_AGAIN, "receive on a fresh decoder is not AGAIN");
 	CHECK(edge264mvc_receive_frame(dec, NULL) == EDGE264MVC_INVALID, "receive_frame(NULL frame) is not INVALID");
 	edge264mvc_close(&dec);
+	// a log callback needs the logs variant: without it the settings are invalid,
+	// never a memory allocation failure
+	settings.log_cb = discard_log;
+	int with_log = edge264mvc_open(&dec, &settings);
+	CHECK(with_log == EDGE264MVC_OK || with_log == EDGE264MVC_INVALID, "open with a log_cb returned %d, not OK or INVALID", with_log);
+	if (with_log == EDGE264MVC_OK)
+		edge264mvc_close(&dec);
+	CHECK(dec == NULL, "open or close with a log_cb left a decoder pointer");
+	settings.log_cb = NULL;
 	// find_start_code reads only inside the buffer
 	const uint8_t sc[] = {7, 0, 0, 1, 5};
 	CHECK(edge264mvc_find_start_code(sc, sizeof(sc)) == 1, "find_start_code missed the start code");

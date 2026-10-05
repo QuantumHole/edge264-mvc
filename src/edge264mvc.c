@@ -222,9 +222,6 @@ static Edge264MvcDecoder *alloc_decoder(int n_threads, Edge264MvcLogCb log_cb, v
 			if (log_mbs)
 				dec->worker_loop = worker_loop_log;
 		}
-	#else
-		if (log_cb)
-			return aligned_free(dec), NULL;
 	#endif
 	
 	// get the number of logical cores available to the process if requested
@@ -941,11 +938,15 @@ int edge264mvc_open(Edge264MvcDecoder **decoder, const Edge264MvcSettings *setti
 		s = *settings;
 	if (s.n_threads < 0 || s.max_frame_pixels < 0)
 		return EDGE264MVC_INVALID;
+	#ifndef HAS_LOGS
+		// the trace is written by the logs variant of the parsers, not built here
+		if (s.log_cb != NULL)
+			return EDGE264MVC_INVALID;
+	#endif
 	// n_threads 0 is auto-detect and 1 decodes on the calling thread, internally -1 and 0
 	Edge264MvcDecoder *dec = alloc_decoder(s.n_threads == 0 ? -1 : s.n_threads == 1 ? 0 : s.n_threads, s.log_cb, s.log_arg, s.log_mbs);
 	if (dec == NULL)
 		return EDGE264MVC_NOMEM;
-	// the largest frame of any level is 139264 macroblocks (MaxFS of level 6.2)
 	dec->max_frame_pixels = s.max_frame_pixels;
 	*decoder = dec;
 	return EDGE264MVC_OK;
