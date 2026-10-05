@@ -1099,7 +1099,7 @@ void edge264mvc_flush(Edge264MvcDecoder *dec) {
 
 size_t edge264mvc_find_start_code(const uint8_t *buf, size_t size) {
 	if (buf == NULL)
-		return 0;
+		return size; // no start code, as documented
 	for (size_t i = 2; i < size; i++) {
 		const uint8_t *one = memchr(buf + i, 1, size - i);
 		if (one == NULL)

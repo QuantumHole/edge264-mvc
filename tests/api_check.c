@@ -319,6 +319,7 @@ int main(int argc, char *argv[]) {
 	const uint8_t sc[] = {7, 0, 0, 1, 5};
 	CHECK(edge264mvc_find_start_code(sc, sizeof(sc)) == 1, "find_start_code missed the start code");
 	CHECK(edge264mvc_find_start_code(sc, 3) == 3, "find_start_code matched past the end");
+	CHECK(edge264mvc_find_start_code(NULL, 5) == 5, "find_start_code(NULL) did not return the size (no start code)");
 	const char *nt = getenv("EDGE264MVC_THREADS");
 	int threads = nt ? atoi(nt) : 4;
 	for (int i = 1; i < argc; i++) {
