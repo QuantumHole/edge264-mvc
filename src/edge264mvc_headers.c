@@ -506,7 +506,9 @@ static void recover_slice(Edge264MvcContext *ctx, int currPic, int keep_mb) {
 		
 		// recover the macroblock depending on slice_type
 		// FIXME use Intra function instead
-		if (ctx->t.slice_type == 2) { // I slice -> blend with intra DC
+		// reason: an I macroblock without error weight keeps its samples, and the
+		// blend could not express it on SSE, whose signed 8-bit weights stop at 127
+		if (ctx->t.slice_type == 2 && p128 > 0) { // I slice -> blend with intra DC
 			size_t stride_Y = ctx->t.stride[0];
 			DECL_SSTRIDE(stride_Y);
 			uint8_t * restrict y0 = ctx->samples_mb[0];
