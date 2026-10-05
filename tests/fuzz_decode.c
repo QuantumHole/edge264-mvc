@@ -49,8 +49,11 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
 	const char *env = getenv("EDGE264MVC_FUZZ_THREADS");
 	settings.n_threads = env ? atoi(env) : 1;
 	Edge264MvcDecoder *dec;
-	if (edge264mvc_open(&dec, &settings) != EDGE264MVC_OK)
-		return 0;
+	if (edge264mvc_open(&dec, &settings) != EDGE264MVC_OK) {
+		// without a decoder every input would pass untested
+		fprintf(stderr, "edge264mvc_open failed (EDGE264MVC_FUZZ_THREADS=%s)\n", env ? env : "unset");
+		abort();
+	}
 	size_t pos = edge264mvc_find_start_code(data, size);
 	while (pos < size) {
 		size_t start = pos + 3;

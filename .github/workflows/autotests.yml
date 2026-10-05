@@ -96,6 +96,8 @@ jobs:
       - uses: actions/checkout@v5
       - run: sudo apt-get update && sudo apt-get install -y clang
       - run: make fuzz
+      # a decoder that cannot be opened must stop the fuzzer, not let it test nothing
+      - run: if EDGE264MVC_FUZZ_THREADS=-1 setarch -R ./fuzz_decode tests/conformance/2d/CABA3_Sony_C.264; then exit 1; fi
       - run: mkdir -p corpus && setarch -R ./fuzz_decode -max_total_time=300 -max_len=262144 -timeout=10 -rss_limit_mb=4096 corpus tests/asan tests/liveness tests/conformance/2d tests/conformance/mvc
       # keep the input that failed, so the finding can be reproduced
       - if: failure()
