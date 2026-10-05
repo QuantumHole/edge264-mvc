@@ -144,6 +144,7 @@ Fixes found by checking the code against the H.264 spec and between the SIMD bac
 | Read `abs_diff_pic_num_minus1` as unsigned (`parse_ref_pic_list_modification`) | a damaged slice coding a value of 2^31 - 1 or more, far beyond what 7.4.3.1 allows, made the reference list modification overflow a signed int - undefined behaviour in a build without `-fwrapv` |
 | Keep the picture order count distances of a B slice in 32 bits and clip `tb` and `td` to 8 bits only once (`initialize_context`), as 8.4.1.2.3 does | the distances were first clipped to 16 bits each, so where a B picture lay more than 32,767 picture order counts from one reference, the difference between two of them came out wrong - even zero - and implicit weighted bi-prediction and temporal direct prediction used wrong weights and motion vector scales |
 | Load the left column of an intra 8x8 block in the SSE2 code with an unaligned load (`ldleft8x8`) | the x86-64 baseline code, which a build for several CPU levels runs on CPUs without SSE4.1, read its last four samples as a 4-byte value from an address that is not 4-byte aligned - undefined behaviour, reported by UndefinedBehaviorSanitizer on valid streams |
+| Address the sample above an intra 4x4 block in the SSE2 code with a signed offset (`ldedge4x4`) | the x86-64 baseline code formed its address by adding `3 - stride` as an unsigned value, which wraps the pointer around - undefined behaviour, reported by UndefinedBehaviorSanitizer on valid streams |
 
 ## Multithreaded decoding fixes
 

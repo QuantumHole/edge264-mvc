@@ -216,7 +216,7 @@
 		// to the macroblock above-right, which another slice of the picture may be
 		// decoding meanwhile (a data race, even if those lanes were discarded).
 		i8x16 v0 = (i8x16)loadu32(p - stride - 1);
-		v0[4] = p[3 - stride];
+		v0[4] = (p - stride)[3]; // not p[3 - stride], whose size_t index wraps
 		i8x16 v1 = loada32(p              - 4);
 		i8x16 v2 = loada32(p + stride     - 4);
 		i8x16 v3 = loada32(p + stride * 2 - 4);

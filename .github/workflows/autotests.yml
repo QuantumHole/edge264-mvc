@@ -74,7 +74,7 @@ jobs:
       # the API of a library built without the logs variant, as released
       - run: make clean && make VARIANTS= check-api
       # the SSE2 code of the x86-64 baseline object, which -march=native skips
-      - run: make clean && make CC=clang SANITIZE=alignment CFLAGS=-march=x86-64 check-conformance
+      - run: make clean && make CC=clang SANITIZE=undefined CFLAGS=-march=x86-64 check-conformance
       - run: make clean
       - run: make CC=clang SANITIZE=thread CFLAGS="-march=x86-64 -g" BUILDTEST=no conformance_check liveness_check asan_check multi_decoder_check slice_overrun_check open_failure_check
       - run: EDGE264MVC_THREADS=8 setarch -R ./conformance_check run tests/conformance/manifest.txt tests/conformance
