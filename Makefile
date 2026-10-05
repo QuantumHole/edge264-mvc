@@ -436,6 +436,7 @@ else
 	$(Q)$(MAKE) --no-print-directory check-alloc-failure
 	$(Q)$(MAKE) --no-print-directory check-partial-receive
 	$(Q)$(MAKE) --no-print-directory check-harness-stall
+	$(Q)$(MAKE) --no-print-directory check-test-results
 endif
 
 edge264mvc_check$(EXE): src/edge264mvc_check.c edge264mvc.h src/edge264mvc_internal.h $(LIBNAME)
@@ -615,6 +616,23 @@ ifeq ($(OS),linux)
 	$(Q)$(TIMEOUT) ./edge264mvc_test_stall -s -y - < tests/conformance/2d/CABA3_Sony_C.264 > /dev/null 2>&1; \
 	  test $$? -eq 1 || { echo "harness stall check FAILED (edge264mvc_test passed a stalled stream input)"; exit 1; }
 	$(Q)echo "harness stall check PASS"
+endif
+
+# edge264mvc_test must count every input it does not decode completely as a
+# FAIL and exit 1: a decoder failing with EDGE264MVC_NOMEM (tests/stall_stub.c),
+# a file it cannot open, and a file named without the .264 suffix. Linux only,
+# like the stub.
+.PHONY: check-test-results
+check-test-results:
+ifeq ($(OS),linux)
+	$(Q)$(CC) -I. src/edge264mvc_test.c tests/stall_stub.c $(CPPFLAGS) $(CFLAGS) -o edge264mvc_test_stall
+	$(Q)STALL_STUB_NOMEM=1 $(TIMEOUT) ./edge264mvc_test_stall -s -y tests/conformance/2d/CABA3_Sony_C.264 > /dev/null 2>&1; \
+	  test $$? -eq 1 || { echo "edge264mvc_test results check FAILED (EDGE264MVC_NOMEM did not FAIL)"; exit 1; }
+	$(Q)$(TIMEOUT) ./edge264mvc_test_stall tests/conformance/2d/does-not-exist.264 > /dev/null 2>&1; \
+	  test $$? -eq 1 || { echo "edge264mvc_test results check FAILED (a missing file did not FAIL)"; exit 1; }
+	$(Q)$(TIMEOUT) ./edge264mvc_test_stall tests/conformance/manifest.txt > /dev/null 2>&1; \
+	  test $$? -eq 1 || { echo "edge264mvc_test results check FAILED (a file without the .264 suffix did not FAIL)"; exit 1; }
+	$(Q)echo "edge264mvc_test results check PASS"
 endif
 
 .PHONY: check-partial-receive

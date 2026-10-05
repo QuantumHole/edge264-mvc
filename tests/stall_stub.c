@@ -1,8 +1,10 @@
-// A stand-in for the decoder library that never makes progress, to check that
-// tests/conformance_check.c and edge264mvc_test report a stalled decoder as a
-// failure instead of hanging or passing (make check-harness-stall). By default every NAL is answered with
-// EDGE264MVC_AGAIN and no frame is ever ready; with STALL_STUB_BLOCK set,
-// send_nal blocks forever, as a deadlocked decoder would.
+// A stand-in for the decoder library that never decodes anything, to check
+// that tests/conformance_check.c and edge264mvc_test report a faulty decoder
+// as a failure instead of hanging or passing (make check-harness-stall and
+// check-test-results). By default every NAL is answered with EDGE264MVC_AGAIN
+// and no frame is ever ready; with STALL_STUB_BLOCK set, send_nal blocks
+// forever, as a deadlocked decoder would; with STALL_STUB_NOMEM set, it fails
+// every NAL with EDGE264MVC_NOMEM.
 
 #include <stdint.h>
 #include <stdlib.h>
@@ -34,7 +36,7 @@ size_t edge264mvc_find_start_code(const uint8_t *buf, size_t size) {
 int edge264mvc_send_nal(Edge264MvcDecoder *dec, const uint8_t *buf, size_t size, int64_t pts, int64_t user_data) {
 	while (getenv("STALL_STUB_BLOCK") != NULL)
 		pause();
-	return EDGE264MVC_AGAIN;
+	return getenv("STALL_STUB_NOMEM") != NULL ? EDGE264MVC_NOMEM : EDGE264MVC_AGAIN;
 }
 
 int edge264mvc_send_end(Edge264MvcDecoder *dec) {

@@ -197,7 +197,7 @@ static SDL_Window *window;
 static SDL_Renderer *renderer;
 static SDL_Texture *texture0, *texture1;
 static int width, height, mvc_display;
-static int count_pass, count_unsup, count_fail, count_flag;
+static int count_pass, count_unsup, count_fail;
 
 static int flt(const struct dirent *a) {
 	char *ext = strrchr(a->d_name, '.');
@@ -453,8 +453,12 @@ static int finish_decode_result(int res)
 			}
 		}
 	}
-	if (res == ENOBUFS)
+	// any other result stopped the decode too early, so the file FAILs as well
+	if (res != ENODATA && res != ENOTSUP && res != EBADMSG) {
+		fprintf(stderr, "edge264mvc_test: decoding stopped on %s\n",
+			res == ENOMEM ? "EDGE264MVC_NOMEM" : res == EINVAL ? "EDGE264MVC_INVALID" : "an unexpected result");
 		res = EBADMSG;
+	}
 	return res;
 }
 
@@ -838,12 +842,12 @@ static int decode_file(const char *name0)
 		conf_end[1] = mm2 != MAP_FAILED ? mm2 + st2.st_size : NULL;
 	#endif
 	
+	// an input that cannot be opened FAILs (and ends the run)
+	count_fail += quit;
+	
 	// print the success counts
 	if (!quit) {
-		if (count_flag > 0)
-			fprintf(msg, "%s%d " GREEN "PASS" RESET ", %d " YELLOW "UNSUPPORTED" RESET ", %d " RED "FAIL" RESET ", %d " BLUE "FLAGGED" RESET " (%s)\n", moveup, count_pass, count_unsup, count_fail, count_flag, name0);
-		else
-			fprintf(msg, "%s%d " GREEN "PASS" RESET ", %d " YELLOW "UNSUPPORTED" RESET ", %d " RED "FAIL" RESET " (%s)\n", moveup, count_pass, count_unsup, count_fail, name0);
+		fprintf(msg, "%s%d " GREEN "PASS" RESET ", %d " YELLOW "UNSUPPORTED" RESET ", %d " RED "FAIL" RESET " (%s)\n", moveup, count_pass, count_unsup, count_fail, name0);
 		moveup = "\e[A\e[K";
 		
 		// decode the entire file and FAIL on any error
@@ -855,7 +859,6 @@ static int decode_file(const char *name0)
 		count_pass += res == ENODATA;
 		count_unsup += res == ENOTSUP;
 		count_fail += res == EBADMSG;
-		count_flag += res == ESRCH;
 		if (res == ENODATA && print_passed) {
 			fprintf(msg, "%s%s: " GREEN "PASS" RESET "\n", moveup, name0);
 			moveup = "";
@@ -864,9 +867,6 @@ static int decode_file(const char *name0)
 			moveup = "";
 		} else if (res == EBADMSG && print_failed) {
 			fprintf(msg, "%s%s: " RED "FAIL" RESET "\n", moveup, name0);
-			moveup = "";
-		} else if (res == ESRCH) {
-			fprintf(msg, "%s%s: " BLUE "FLAGGED" RESET "\n", moveup, name0);
 			moveup = "";
 		}
 	}
@@ -993,7 +993,14 @@ int main(int argc, char *argv[])
 	if (strcmp(file_name, "-") == 0) {
 		decode_file(file_name);
 	} else if (chdir(file_name) < 0) {
-		decode_file(file_name);
+		// a file named explicitly, whose .yuv reference is found by its .264 suffix
+		const char *extension = strrchr(file_name, '.');
+		if (extension == NULL || strcmp(extension, ".264") != 0) {
+			fprintf(stderr, "%s: not a .264 file (other files can be read from -)\n", file_name);
+			count_fail++;
+		} else {
+			decode_file(file_name);
+		}
 	} else {
 		#ifdef _WIN32
 			DIR *dp;
@@ -1010,10 +1017,7 @@ int main(int argc, char *argv[])
 		#endif
 	}
 	
-	if (count_flag > 0)
-		fprintf(msg, "%s%d " GREEN "PASS" RESET ", %d " YELLOW "UNSUPPORTED" RESET ", %d " RED "FAIL" RESET ", %d " BLUE "FLAGGED" RESET "\n", moveup, count_pass, count_unsup, count_fail, count_flag);
-	else
-		fprintf(msg, "%s%d " GREEN "PASS" RESET ", %d " YELLOW "UNSUPPORTED" RESET ", %d " RED "FAIL" RESET "\n", moveup, count_pass, count_unsup, count_fail);
+	fprintf(msg, "%s%d " GREEN "PASS" RESET ", %d " YELLOW "UNSUPPORTED" RESET ", %d " RED "FAIL" RESET "\n", moveup, count_pass, count_unsup, count_fail);
 	release_out();
 	edge264mvc_close(&d);
 	
