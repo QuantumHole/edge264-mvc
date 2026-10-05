@@ -1388,10 +1388,12 @@ static int parse_ref_pic_list_modification(Edge264MvcDecoder *dec, Edge264MvcSeq
 		if (get_u1(&dec->gb)) { // ref_pic_list_modification_flag
 			log_dec(dec, "  ref_pic_list_modifications_l%u: [", l);
 			for (int refIdx = 0, modification_of_pic_nums_idc; (modification_of_pic_nums_idc = get_ue16(&dec->gb, 5)) != 3 && refIdx < 32; refIdx++) {
-				int num = get_ue32(&dec->gb, 4294967294);
-				log_dec(dec, "[\"%s\",%+d],",
+				// unsigned, as a damaged slice may code values up to 2^32 - 2, far
+				// beyond MaxPicNum - 1 (7.4.3.1), on which picNumLX wraps anyway
+				unsigned num = get_ue32(&dec->gb, 4294967294);
+				log_dec(dec, "[\"%s\",%+lld],",
 					modification_of_pic_nums_idc < 2 ? "sref" : modification_of_pic_nums_idc == 2 ? "lref" : "view",
-					modification_of_pic_nums_idc % 4 == 0 ? -num - 1 : num + (modification_of_pic_nums_idc != 2));
+					modification_of_pic_nums_idc % 4 == 0 ? -(long long)num - 1 : (long long)num + (modification_of_pic_nums_idc != 2));
 				int pic = dec->basePic; // for modification_of_pic_nums_idc == 4 and 5
 				if (modification_of_pic_nums_idc < 2) {
 					picNumLX = (modification_of_pic_nums_idc == 0) ? picNumLX - (num + 1) : picNumLX + (num + 1);

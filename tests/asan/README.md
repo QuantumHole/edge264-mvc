@@ -206,3 +206,11 @@ guard against sanitizer aborts and CPU-burn.
   for each of these 8-byte NALs, more than the timeout of the harness for the 400.
   The loops of the MVC extension and of its VUI extension now stop at the end of
   the NAL.
+
+- reflist_num_overflow.264: an IDR picture and a P slice whose reference list
+  modification codes abs_diff_pic_num_minus1 = 2^31 - 1, far beyond the
+  MaxPicNum - 1 that 7.4.3.1 allows (tests/gen_reflist_num_overflow.py).
+  parse_ref_pic_list_modification read it into an int and added 1 - a signed
+  overflow, which UndefinedBehaviorSanitizer reports in a build without the
+  -fwrapv of the Makefile. The value is now unsigned, as the picture number it
+  is subtracted from already was.
