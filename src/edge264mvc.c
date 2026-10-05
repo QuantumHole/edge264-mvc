@@ -271,8 +271,14 @@ static Edge264MvcDecoder *alloc_decoder(int n_threads, Edge264MvcLogCb log_cb, v
 					if (i == n_threads) {
 						return dec;
 					}
+					// stop and join the workers created so far, as free_decoder does,
+					// before their synchronisation objects and the decoder go away
+					pthread_mutex_lock(&dec->lock);
+					dec->shutdown = 1;
+					pthread_cond_broadcast(&dec->task_ready);
+					pthread_mutex_unlock(&dec->lock);
 					while (i-- > 0)
-						pthread_cancel(dec->threads[i]);
+						pthread_join(dec->threads[i], NULL);
 					pthread_cond_destroy(&dec->task_complete);
 				}
 			}

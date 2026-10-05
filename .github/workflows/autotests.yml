@@ -69,7 +69,7 @@ jobs:
       - run: setarch -R make CC=clang SANITIZE=address,undefined check
       - run: setarch -R make CC=clang SANITIZE=address,undefined check-asan
       - run: make clean
-      - run: make CC=clang SANITIZE=thread CFLAGS="-march=x86-64 -g" BUILDTEST=no conformance_check liveness_check asan_check multi_decoder_check slice_overrun_check
+      - run: make CC=clang SANITIZE=thread CFLAGS="-march=x86-64 -g" BUILDTEST=no conformance_check liveness_check asan_check multi_decoder_check slice_overrun_check open_failure_check
       - run: EDGE264MVC_THREADS=8 setarch -R ./conformance_check run tests/conformance/manifest.txt tests/conformance
       - run: EDGE264MVC_THREADS=8 setarch -R ./liveness_check run tests/liveness/manifest.txt tests/liveness
       - run: EDGE264MVC_THREADS=4 setarch -R ./asan_check run tests/asan/manifest.txt tests/asan
@@ -77,6 +77,7 @@ jobs:
       - run: setarch -R ./slice_overrun_check tests/conformance/2d-synthetic/overrun_reference.264 8 300 20
       # inter prediction at the right picture edge against the deblocking of its reference
       - run: TSAN_OPTIONS=halt_on_error=1 setarch -R ./slice_overrun_check tests/conformance/2d/cabac_mot_frm0_full.264 2 0 20
+      - run: setarch -R ./open_failure_check
   # A short libFuzzer run seeded with the committed streams, so a change that
   # breaks the decoder on damaged input shows up before a long campaign would.
   x86_64-linux-fuzz:

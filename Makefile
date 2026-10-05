@@ -402,7 +402,7 @@ uninstall:
 # ==============================================================================
 .PHONY: clean clear
 clean clear:
-	$(Q)rm -f edge264mvc_test edge264mvc_test.exe edge264mvc_test.js edge264mvc_test.wasm edge264mvc_check edge264mvc_check.exe edge264mvc_check.js edge264mvc_check.wasm conformance_check conformance_check.exe liveness_check liveness_check.exe asan_check asan_check.exe api_check api_check.exe multi_decoder_check multi_decoder_check.exe slice_overrun_check slice_overrun_check.exe static_plugin.so static_plugin.dll fuzz_decode edge264*.o libedge264mvc.a edge264mvc.$(MAJOR).dll libedge264mvc.dll.a edge264mvc.js edge264mvc.wasm libedge264mvc.$(MAJOR).dylib libedge264mvc-universal.$(MAJOR).dylib libedge264mvc.so libedge264mvc.so.$(MAJOR)
+	$(Q)rm -f edge264mvc_test edge264mvc_test.exe edge264mvc_test.js edge264mvc_test.wasm edge264mvc_check edge264mvc_check.exe edge264mvc_check.js edge264mvc_check.wasm conformance_check conformance_check.exe liveness_check liveness_check.exe asan_check asan_check.exe api_check api_check.exe multi_decoder_check multi_decoder_check.exe slice_overrun_check slice_overrun_check.exe open_failure_check open_failure_check.exe static_plugin.so static_plugin.dll fuzz_decode edge264*.o libedge264mvc.a edge264mvc.$(MAJOR).dll libedge264mvc.dll.a edge264mvc.js edge264mvc.wasm libedge264mvc.$(MAJOR).dylib libedge264mvc-universal.$(MAJOR).dylib libedge264mvc.so libedge264mvc.so.$(MAJOR)
 
 
 # ==============================================================================
@@ -430,6 +430,7 @@ else
 	$(Q)$(MAKE) --no-print-directory check-api
 	$(Q)$(MAKE) --no-print-directory check-multi-decoder
 	$(Q)$(MAKE) --no-print-directory check-slice-overrun
+	$(Q)$(MAKE) --no-print-directory check-open-failure
 endif
 
 edge264mvc_check$(EXE): src/edge264mvc_check.c edge264mvc.h src/edge264mvc_internal.h $(LIBNAME)
@@ -553,6 +554,19 @@ check-slice-overrun: slice_overrun_check$(EXE)
 
 slice_overrun_check$(EXE): tests/slice_overrun_check.c edge264mvc.h $(LIBNAME)
 	$(Q)$(CCLD) -I. tests/slice_overrun_check.c $(CPPFLAGS) $(CFLAGS) $(EXEFLAGS) -o $@
+
+# edge264mvc_open when creating one of its worker threads fails (see
+# tests/open_failure_check.c). It interposes pthread_create, hence Linux only.
+# Run under the sanitizers in CI.
+.PHONY: check-open-failure
+check-open-failure:
+ifeq ($(OS),linux)
+	$(Q)$(MAKE) --no-print-directory open_failure_check
+	$(Q)$(TIMEOUT) ./open_failure_check
+endif
+
+open_failure_check: tests/open_failure_check.c edge264mvc.h $(LIBNAME)
+	$(Q)$(CCLD) -I. tests/open_failure_check.c $(CPPFLAGS) $(CFLAGS) $(EXEFLAGS) -ldl -o $@
 
 # The same crafted fixtures without a sanitizer, single-threaded and with four
 # worker threads, as part of `check`: they also guard hangs, some of which need
