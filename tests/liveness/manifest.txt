@@ -185,3 +185,10 @@ mvc_truncated_dependent 9
 # its own progress (no frame, then a stall). A correct decoder rejects the slice
 # (no frame) and terminates. Regression => stall.
 self_reference 0
+# reordered_damaged_slices: one IDR picture of ten one-row slices sent in the order
+# 1..9, 0 with slices 1..9 truncated (tests/gen_reordered_damaged_slices.py). Each
+# damaged slice waited for its turn behind slice 0, which arrived after it; with 8
+# worker threads all of them waited while none was left to decode slice 0, so
+# send_nal never returned. A correct decoder conceals the picture and delivers it (1).
+# Regression => deadlock under EDGE264MVC_THREADS=8.
+reordered_damaged_slices 1

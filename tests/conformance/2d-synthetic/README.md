@@ -98,3 +98,15 @@ FFmpeg-anchored hash.
 Guards the content of frames inferred for a `frame_num` gap (8.2.5.2). A 176x144 libx264 encode of `testsrc2` with one reference frame and no B-frames, with picture 6 removed (`tests/gen_gap_reference.py`, which also lists the encoding command), so picture 7 predicts from the inferred frame. The decoder allocated that frame without writing its samples or macroblocks, so the pictures after the gap showed whatever the reused DPB slot held before - a different picture single- and multithreaded, and varying from run to run. FFmpeg, which this line is anchored to, fills the inferred frame with the previous reference picture.
 
 Without the fix this line FAILs (wrong base hash, single- and multithreaded).
+
+## `overlapping_slices.264`
+
+Guards the handling of slices that overlap (non-conformant, 7.4.3 `first_mb_in_slice`), as a stream decoded with a picture parameter set that does not match its slices produces. Ten 1920x1080 IDR pictures, each with a slice A covering the whole picture in flat gray and a slice B covering 16 macroblocks with I_PCM samples of 200, starting in turn at the last 16 macroblocks and at macroblocks 1, 121, 4000 and 2 (`tests/gen_overlapping_slices.py`). Where slice B starts early, a worker thread that began slice A before the parser saw slice B usually decodes past B's start, and has to decode slice A again with its end known. The decoder now ends every slice where the next slice of its picture starts, as FFmpeg does with `next_slice_idx`, so slice B keeps its macroblocks and slice A is cut before them. Before, the overlap went to whichever slice claimed a macroblock first: slice A when decoding single-threaded, often slice B with worker threads. The hash is anchored to the single-threaded decode of the fixed decoder, which multithreaded decoding must match; FFmpeg resolves this overlap differently again, so it does not serve as the oracle.
+
+Without the fix this line FAILs single-threaded (slice A wins) and, depending on the timing, multithreaded.
+
+## `reversed_slices.264`
+
+Guards slices of one picture that arrive out of address order. The pictures of `slice_deblock_offsets.264` with their four slices sent in reverse order (`tests/gen_reversed_slices.py`); arbitrary slice order is legal only in Baseline profile, so for this CABAC stream it is damaged input. A slice used to wait for any busy slice of its picture with a lower `first_mb_in_slice`, including one that arrived after it, and was then deblocked with its own filter offsets, while decoding single-threaded the same slice is left to the end of the picture. The output thus depended on the thread timing. A slice now waits only for slices decoded before it, and a slice whose macroblocks may overlap those of an older slice still being decoded starts after it, as it would single-threaded. The hash is anchored to the single-threaded decode.
+
+Without the fix this line FAILs under `EDGE264MVC_THREADS`, with a different output from run to run.

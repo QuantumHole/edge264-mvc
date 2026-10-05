@@ -1,4 +1,7 @@
 #include "edge264mvc_internal.h"
+static noinline void known_mb_bound(Edge264MvcContext *ctx, int32_t mb_bound, int claimed);
+static noinline int claim_after_older_slices(Edge264MvcContext *ctx);
+static void ack_mb_bound(Edge264MvcDecoder *dec, int task_id, int pic);
 
 #include "edge264mvc_bitstream.c"
 #include "edge264mvc_deblock.c"
@@ -58,8 +61,11 @@ static const i8x16 Default_8x8_Inter[4] = {
  * POCs should differ anyway. BottomFieldOrderCnt is ignored too because the
  * test on TopFieldOrderCnt is sufficient.
  */
+static void release_held_task(Edge264MvcDecoder *dec, int32_t mb_bound);
+
 static void unset_currPic(Edge264MvcDecoder *dec) {
 	assert(dec->currPic >= 0);
+	release_held_task(dec, INT_MAX); // the picture ends, so does its last slice
 	int non_base_view = dec->non_base_frames >> dec->currPic & 1;
 	if ((dec->short_term_frames | dec->long_term_frames) & 1u << dec->currPic) {
 		unsigned same_views = non_base_view ? dec->non_base_frames : ~dec->non_base_frames;
@@ -239,6 +245,7 @@ static void catch_up_dependent_bumps(Edge264MvcDecoder *dec) {
 
 static void flush_frames(Edge264MvcDecoder *dec) {
 	// FIXME interrupt all threads then wait until they are back to wait
+	release_held_task(dec, INT_MAX);
 	assert(!(dec->n_threads == 0 && dec->busy_tasks));
 	while (dec->busy_tasks)
 		progress_or_wait(dec);
@@ -278,6 +285,7 @@ static int alloc_frame(Edge264MvcDecoder *dec, int id, int errno_on_fail) {
 static void clear_decoder(Edge264MvcDecoder *dec) {
 	memset((void *)dec + offsetof(Edge264MvcDecoder, nal_ref_idc), 0, offsetof(Edge264MvcDecoder, log_base_us) - offsetof(Edge264MvcDecoder, nal_ref_idc));
 	dec->currPic = dec->basePic = -1;
+	dec->held_task = -1;
 	dec->PrevRefFrameNum[0] = dec->PrevRefFrameNum[1] = -1;
 	dec->taskPics_v = dec->get_frame_queue_v[0] = dec->get_frame_queue_v[1] = set8(-1);
 }
@@ -528,9 +536,18 @@ static void recover_slice(Edge264MvcContext *ctx, int currPic, int keep_mb) {
 			uint8_t * restrict c0 = ctx->samples_mb[1];
 			uint8_t * restrict c7 = c0 + stride_C * 7;
 			uint8_t * restrict cE = c7 + stride_C * 7;
-			i8x16 lbr = ldleftC(c0, stride_C, 0); // from intra.c
-			i8x16 b = ziplo64(loada64(DADDR(c0, -2)), l);
-			i8x16 r = combine64(loada64(DADDR(c0, -1)), l);
+			// chroma DC from the available chroma neighbours like the luma one above,
+			// never from samples outside the slice or above the picture
+			i8x16 lc = set8(-128), tc = lc;
+			if (i > 0 && ctx->mbx > 0) // A available
+				lc = tc = ldleftC(c0, stride_C, 0); // from intra.c, left Cb then left Cr
+			if (i >= ctx->t.pic_width_in_mbs) { // B available
+				tc = loada64x2(DADDR(c0, -2), DADDR(c0, -1)); // top Cb then top Cr
+				if (i == 0 || ctx->mbx == 0)
+					lc = tc;
+			}
+			i8x16 b = ziplo64(tc, lc);
+			i8x16 r = ziphi64(tc, lc);
 			i8x16 dcb = broadcast8(shrru16(sum8(b), 4), 0);
 			i8x16 dcr = broadcast8(shrru16(sum8(r), 4), 0);
 			i8x16 dcC = ziplo64(dcb, dcr);
@@ -652,7 +669,7 @@ static void deblock_range(Edge264MvcContext *c, int currPic, int from, int to) {
  * recovers its unpublished macroblocks only after deblocking the others.
  */
 enum { SLICE_ABANDONED, SLICE_TURN, SLICE_DEFERRED };
-static int slice_turn(Edge264MvcContext *c, int currPic, int keep_mb, int ret) {
+static int slice_turn(Edge264MvcContext *c, int currPic, uint32_t seq, int keep_mb, int ret) {
 	Edge264MvcDecoder *dec = c->d;
 	int32_t first = c->t.first_mb_in_slice;
 	int32_t cur = __atomic_load_n(&dec->next_deblock_addr[currPic], __ATOMIC_ACQUIRE);
@@ -662,10 +679,16 @@ static int slice_turn(Edge264MvcContext *c, int currPic, int keep_mb, int ret) {
 			cur = __atomic_load_n(&dec->next_deblock_addr[currPic], __ATOMIC_ACQUIRE);
 			if (cur >= first)
 				break;
+			// Only the slices decoded before this one can precede it, as when decoding
+			// single-threaded: one that arrives later with a lower first_mb_in_slice
+			// (arbitrary slice order, or a damaged stream) must not be waited for,
+			// which made the outcome depend on the timing and could hold every
+			// worker in this wait while the slices they waited for found none.
 			int preceding = 0;
 			for (unsigned b = dec->busy_tasks; b; b &= b - 1) {
 				int i = __builtin_ctz(b);
-				preceding |= dec->taskPics[i] == currPic && dec->tasks[i].first_mb_in_slice < first;
+				preceding |= dec->taskPics[i] == currPic && dec->tasks[i].first_mb_in_slice < first &&
+					(int32_t)(dec->task_seq[i] - seq) < 0;
 			}
 			if (!preceding)
 				break;
@@ -728,6 +751,43 @@ static void process_pending_slices(Edge264MvcContext *c, int currPic, int32_t fr
 
 
 /**
+ * Saves (or restores) the samples of the slices before this one that its
+ * deblocking may change: the bottom rows of the macroblock row above its first
+ * macroblock (top edges of its first macroblocks) and the macroblock row of its
+ * first macroblock (left edge of the first one, and top edges of those below).
+ * Returns 0 if the buffer could not be allocated.
+ */
+static int spec_rows(Edge264MvcContext *c, int slot, int restore) {
+	Edge264MvcDecoder *dec = c->d;
+	int y = c->t.first_mb_in_slice / c->t.pic_width_in_mbs;
+	int fromY = max(y * 16 - 4, 0), toY = y * 16 + 16;
+	int fromC = max(y * 8 - 2, 0), toC = y * 8 + 8;
+	size_t sizeY = (size_t)(toY - fromY) * c->t.stride[0];
+	size_t size = sizeY + (size_t)(toC - fromC) * c->t.stride[1];
+	if (dec->spec_rows_sizes[slot] < size) {
+		free(dec->spec_rows_allocs[slot]);
+		dec->spec_rows_allocs[slot] = malloc(size);
+		dec->spec_rows_sizes[slot] = dec->spec_rows_allocs[slot] ? size : 0;
+		if (!dec->spec_rows_allocs[slot])
+			return 0;
+	}
+	uint8_t *samples = c->t.samples_buffers[c->currPic];
+	uint8_t *rowsY = samples + (size_t)fromY * c->t.stride[0];
+	uint8_t *rowsC = samples + c->t.plane_size_Y + (size_t)fromC * c->t.stride[1];
+	uint8_t *buf = dec->spec_rows_allocs[slot];
+	if (restore) {
+		memcpy(rowsY, buf, sizeY);
+		memcpy(rowsC, buf + sizeY, size - sizeY);
+	} else {
+		memcpy(buf, rowsY, sizeY);
+		memcpy(buf + sizeY, rowsC, size - sizeY);
+	}
+	return 1;
+}
+
+
+
+/**
  * This function is the entry point for worker threads, where they consume
  * tasks continuously until stopped by the parent process.
  */
@@ -761,19 +821,42 @@ void *ADD_VARIANT(worker_loop)(void *arg) {
 		int currPic = c.d->taskPics[task_id];
 		c.d->pending_tasks &= ~(1 << task_id);
 		c.d->ready_tasks &= ~(1 << task_id);
+		int32_t mb_bound = __atomic_load_n(&c.d->task_bounds[task_id], __ATOMIC_ACQUIRE);
+		if (mb_bound != BOUND_UNKNOWN)
+			__atomic_fetch_or(&c.d->acked_tasks, 1u << task_id, __ATOMIC_SEQ_CST);
+		// an older slice of the picture that may still decode past its bound may
+		// roll its deblocking frontier back, so this one cannot deblock in its turn
+		int after_spec = 0;
+		for (unsigned b = c.d->busy_tasks & ~__atomic_load_n(&c.d->acked_tasks, __ATOMIC_SEQ_CST); b; b &= b - 1) {
+			int i = __builtin_ctz(b);
+			after_spec |= c.d->taskPics[i] == currPic && (int32_t)(c.d->task_seq[i] - c.d->task_seq[task_id]) < 0;
+		}
 		if (c.thread_id >= 0)
 			pthread_mutex_unlock(&c.d->lock);
 		unsigned long long clock_start = get_relative_time_us() - c.log_base_us;
 		c.t = c.d->tasks[task_id];
+		c.t.mb_bound = mb_bound;
+		c.task_id = task_id;
+		c.currPic = currPic;
+		c.overrun = 0;
 		unsigned approx_byte_size = c.t.gb.end - c.t.gb.CPB;
+		#ifdef LOGS
+			// single-threaded, a slice is decoded once the next NAL has bounded it, so
+			// its macroblocks open their own entry rather than follow its header
+			if (c.thread_id < 0 && c.log_cb) {
+				Edge264MvcContext *ctx = &c;
+				log_mb(ctx, "\n- thread_id: -1\n"
+					"  FrameId: %u\n"
+					"  first_mb_in_slice: %u\n"
+					"  macroblocks_%s:\n",
+					c.t.FrameId, c.t.first_mb_in_slice, c.t.pps.entropy_coding_mode_flag ? "cabac" : "cavlc");
+			}
+		#endif
 		// The slice deblocks its macroblocks while decoding them if all the
 		// macroblocks before it are already deblocked (or if it is deblocked
 		// independently), and then publishes the deblocking frontier per row for
 		// the tasks reading this frame. Otherwise it deblocks them at the end.
 		int32_t cur_deblock_addr = __atomic_load_n(&c.d->next_deblock_addr[currPic], __ATOMIC_ACQUIRE);
-		c.t.next_deblock_idc = (cur_deblock_addr == c.t.first_mb_in_slice) ? currPic : -1;
-		c.t.next_deblock_addr = (cur_deblock_addr == c.t.first_mb_in_slice ||
-			c.t.disable_deblocking_filter_idc == 2) ? c.t.first_mb_in_slice : INT_MIN;
 		
 		// (re)allocate the ring of neighbouring values for this thread, with
 		// room for the copies at both ends and for the alignment of entries
@@ -786,9 +869,27 @@ void *ADD_VARIANT(worker_loop)(void *arg) {
 		}
 		if (c.d->mbc_ring_allocs[slot])
 			c.mbc_ring = (Edge264MvcMbCache *)(((uintptr_t)c.d->mbc_ring_allocs[slot] + 63) & -64) + 1;
+	decode_slice:;
+		int in_turn = cur_deblock_addr == c.t.first_mb_in_slice && !after_spec;
+		c.t.next_deblock_idc = in_turn ? currPic : -1;
+		c.t.next_deblock_addr = (in_turn || c.t.disable_deblocking_filter_idc == 2) ? c.t.first_mb_in_slice : INT_MIN;
+		// A slice started before its bound is known decodes, deblocks and publishes
+		// as usual: should it go past the bound, the slice following it is the next
+		// NAL, so no task of a later picture reads this one yet, and its rows can be
+		// taken back. The rows of the slices before it that its deblocking changes
+		// are kept aside, so that decoding it again deblocks the same samples (and
+		// if they cannot be, it deblocks at the end like a slice out of its turn).
+		int saved_rows = 0;
+		if (c.t.mb_bound == BOUND_UNKNOWN && in_turn && c.t.disable_deblocking_filter_idc == 0 &&
+			!(saved_rows = spec_rows(&c, slot, 0))) {
+			in_turn = 0;
+			c.t.next_deblock_idc = -1;
+			c.t.next_deblock_addr = INT_MIN;
+		}
 		initialize_context(&c, currPic);
 		
 		// call the function containing the macroblock decoding loop
+		ret = 0;
 		if (!c.d->mbc_ring_allocs[slot]) {
 			ret = ENOMEM;
 		} else if (!c.t.pps.entropy_coding_mode_flag) {
@@ -818,6 +919,34 @@ void *ADD_VARIANT(worker_loop)(void *arg) {
 					ret = EBADMSG; // FIXME error_flag
 			}
 		}
+
+		// A slice that decoded all its data before the next NAL bounded it waits for
+		// that. If it went past its bound, it undoes its claims, acks, and is
+		// decoded again with the bound (nothing it did is visible yet).
+		if (c.t.mb_bound == BOUND_UNKNOWN && c.d->mbc_ring_allocs[slot]) {
+			pthread_mutex_lock(&c.d->lock);
+			while ((mb_bound = __atomic_load_n(&c.d->task_bounds[task_id], __ATOMIC_ACQUIRE)) == BOUND_UNKNOWN) {
+				__atomic_store_n(&c.d->progress_wake_addr[currPic], INT_MIN, __ATOMIC_SEQ_CST);
+				pthread_cond_wait(&c.d->frame_progress[currPic], &c.d->lock);
+			}
+			pthread_mutex_unlock(&c.d->lock);
+			known_mb_bound(&c, mb_bound, 0);
+		}
+		if (__builtin_expect(c.overrun, 0)) {
+			if (in_turn)
+				publish_frame_progress(c.d, currPic, c.t.first_mb_in_slice);
+			if (saved_rows)
+				spec_rows(&c, slot, 1);
+			int width = c.t.pic_width_in_mbs;
+			for (int addr = c.t.first_mb_in_slice; addr < c.CurrMbAddr; addr++)
+				__atomic_store_n(&c.t.mb_buffer[addr % width + addr / width * (width + 1)].recovery_bits, c.t.frame_flip_bit ^ 1, __ATOMIC_RELAXED);
+			ack_mb_bound(c.d, task_id, currPic);
+			mb_bound = c.t.mb_bound;
+			c.t = c.d->tasks[task_id];
+			c.t.mb_bound = mb_bound;
+			c.overrun = 0;
+			goto decode_slice;
+		}
 		if (c.t.unref_cb)
 			c.t.unref_cb((int)ret, c.t.unref_arg);
 		
@@ -834,7 +963,7 @@ void *ADD_VARIANT(worker_loop)(void *arg) {
 		// deblock and publish the slice after the preceding ones of its frame,
 		// so that each macroblock is deblocked with the parameters of its own
 		// slice rather than those of the slice completing the frame
-		int turn = slice_turn(&c, currPic, keep_mb, ret);
+		int turn = slice_turn(&c, currPic, c.d->task_seq[task_id], keep_mb, ret);
 		if (turn == SLICE_TURN && c.t.next_deblock_addr < 0 && c.t.disable_deblocking_filter_idc == 0)
 			c.t.next_deblock_addr = c.t.first_mb_in_slice;
 		if (c.t.next_deblock_addr >= 0 && (turn != SLICE_DEFERRED || c.t.disable_deblocking_filter_idc == 2))
@@ -897,6 +1026,15 @@ void *ADD_VARIANT(worker_loop)(void *arg) {
 		c.d->busy_tasks &= ~(1 << task_id);
 		c.d->task_dependencies[task_id] = 0;
 		c.d->taskPics[task_id] = -1;
+		// let the tasks start that waited for this one to share its macroblocks,
+		// before its slot (and bit) can be reused by another task
+		unsigned waiting = 0;
+		for (int i = 0; i < 16; i++) {
+			waiting |= c.d->task_after[i] >> task_id & 1;
+			c.d->task_after[i] &= ~(1u << task_id);
+		}
+		if (c.thread_id >= 0 && waiting && (c.d->ready_tasks = ready_tasks(c.d)))
+			pthread_cond_broadcast(&c.d->task_ready);
 		if (c.thread_id >= 0)
 			release_terminal_task_dependencies(c.d);
 		if (c.thread_id < 0)
@@ -1462,6 +1600,103 @@ static void progress_or_wait(Edge264MvcDecoder *dec) {
 	pthread_cond_wait(&dec->task_complete, &dec->lock);
 }
 
+// Marks that a task knows its bound and decodes nothing past it, and wakes a
+// younger slice waiting for that in claim_after_older_slices. The seq_cst
+// store-then-load pairs with the waiter's, so either it sees the ack or this
+// sees it waiting.
+static void ack_mb_bound(Edge264MvcDecoder *dec, int task_id, int pic) {
+	__atomic_fetch_or(&dec->acked_tasks, 1u << task_id, __ATOMIC_SEQ_CST);
+	if (__atomic_load_n(&dec->progress_wake_addr[pic], __ATOMIC_SEQ_CST) != INT_MAX) {
+		pthread_mutex_lock(&dec->lock);
+		wake_frame_waiters(dec, pic);
+		pthread_mutex_unlock(&dec->lock);
+	}
+}
+
+/**
+ * Gives the held slice task its bound, now that the next NAL tells where it
+ * ends: mb_bound is the first macroblock of the slice following it in decoding
+ * order if that one starts after it, else INT_MAX. Like FFmpeg (next_slice_idx),
+ * a slice thus never decodes past the start of the next one, which makes slices
+ * that overlap on a damaged stream resolve the same way whatever the thread
+ * timing, rather than by whichever worker claims a macroblock first.
+ * Single-threaded, the task was held and runs now. Multithreaded, it started
+ * when it was parsed and learns its bound as it goes (see known_mb_bound).
+ */
+static void release_held_task(Edge264MvcDecoder *dec, int32_t mb_bound) {
+	int i = dec->held_task;
+	if (i < 0)
+		return;
+	dec->held_task = -1;
+	__atomic_store_n(&dec->task_bounds[i], mb_bound, __ATOMIC_RELEASE);
+	if (dec->n_threads) {
+		wake_frame_waiters(dec, dec->taskPics[i]); // a worker done with the slice waits there
+	} else {
+		dec->ready_tasks = ready_tasks(dec);
+		while (dec->busy_tasks) {
+			if (!dec->ready_tasks) {
+				// Keep damaged-stream concealment deterministic across threading
+				// modes. A terminal incomplete dependency has no writer here either;
+				// conceal it before falling back to the historical force-run valve.
+				release_terminal_task_dependencies(dec);
+				if (!dec->ready_tasks) {
+					// ready_tasks can also be 0 when task_dependencies includes the
+					// current frame's own slot in a transitional state.
+					dec->ready_tasks |= 1 << oldest_task(dec, dec->pending_tasks);
+				}
+			}
+			dec->worker_loop(dec);
+		}
+	}
+}
+
+/**
+ * Called on a multithreaded slice that started before its bound was known, at
+ * the first macroblock after the parser set it, or after its last macroblock.
+ * If it already decoded past the bound (overlapping slices of a damaged
+ * stream), it is decoded again as if it had known the bound from the start
+ * (overrun, see worker_loop). Otherwise it acks the bound for a younger slice
+ * of its picture that found one of its macroblocks claimed meanwhile.
+ */
+static noinline void known_mb_bound(Edge264MvcContext *ctx, int32_t mb_bound, int claimed) {
+	ctx->t.mb_bound = mb_bound;
+	if (ctx->CurrMbAddr + claimed > mb_bound)
+		ctx->overrun = 1; // acked once its claims are undone
+	else
+		ack_mb_bound(ctx->d, ctx->task_id, ctx->currPic);
+}
+
+/**
+ * Called when a slice finds a macroblock already claimed in its picture. On a
+ * conformant stream that never happens. An older slice that started before its
+ * bound was known may have decoded past it into this slice, and gives those
+ * macroblocks back once it learns the bound, so wait for every such slice to
+ * ack it and try again. Any claim left is one an older slice decoding up to its
+ * bound made, which ends this slice as when decoding single-threaded.
+ */
+static noinline int claim_after_older_slices(Edge264MvcContext *ctx) {
+	Edge264MvcDecoder *dec = ctx->d;
+	if (ctx->thread_id < 0)
+		return 0;
+	pthread_mutex_lock(&dec->lock);
+	for (;;) {
+		unsigned unacked = 0;
+		unsigned acked = __atomic_load_n(&dec->acked_tasks, __ATOMIC_SEQ_CST);
+		for (unsigned b = dec->busy_tasks & ~acked; b; b &= b - 1) {
+			int i = __builtin_ctz(b);
+			unacked |= (dec->taskPics[i] == ctx->currPic && (int32_t)dec->tasks[i].first_mb_in_slice < ctx->CurrMbAddr &&
+				(int32_t)(dec->task_seq[i] - dec->task_seq[ctx->task_id]) < 0) << i;
+		}
+		if (!unacked)
+			break;
+		__atomic_store_n(&dec->progress_wake_addr[ctx->currPic], INT_MIN, __ATOMIC_SEQ_CST);
+		if (!(__atomic_load_n(&dec->acked_tasks, __ATOMIC_SEQ_CST) & unacked))
+			pthread_cond_wait(&dec->frame_progress[ctx->currPic], &dec->lock);
+	}
+	pthread_mutex_unlock(&dec->lock);
+	return __atomic_exchange_n(&ctx->_mb->recovery_bits, ctx->t.frame_flip_bit, __ATOMIC_ACQ_REL) != ctx->t.frame_flip_bit;
+}
+
 
 
 /**
@@ -1480,7 +1715,7 @@ static int output_stalled(Edge264MvcDecoder *dec) {
 	}
 	if (dec->undelivered)
 		return 1;
-	while (dec->busy_tasks)
+	while (dec->busy_tasks & ~held_tasks(dec)) // the held slice belongs to the open picture
 		progress_or_wait(dec);
 	dec->undelivered = 1;
 	return 0;
@@ -2076,41 +2311,47 @@ int ADD_VARIANT(parse_slice_layer_without_partitioning)(Edge264MvcDecoder *dec, 
 		#endif
 	}
 	
-	// prepare the task and signal it
+	// prepare the task, whose end the next NAL tells (held until then when
+	// single-threaded), and tell the previous slice of this picture where it ends
 	initialize_task(dec, sps, t);
 	int task_id = t - dec->tasks;
+	int prev = dec->held_task;
+	if (prev >= 0) {
+		uint32_t prev_first = dec->tasks[prev].first_mb_in_slice;
+		release_held_task(dec, dec->taskPics[prev] == dec->currPic && t->first_mb_in_slice > prev_first ?
+			(int32_t)t->first_mb_in_slice : INT_MAX);
+	}
+	// A slice whose macroblocks may overlap those of an older one still busy (a
+	// lower slice arriving later, or one before it that had no bound) starts after
+	// it, as it does single-threaded, where every older slice is done.
+	unsigned after = 0;
+	for (unsigned b = dec->busy_tasks; b; b &= b - 1) {
+		int j = __builtin_ctz(b);
+		if (dec->taskPics[j] == dec->currPic &&
+			__atomic_load_n(&dec->task_bounds[j], __ATOMIC_RELAXED) > (int32_t)t->first_mb_in_slice)
+			after |= 1u << j;
+	}
+	dec->task_after[task_id] = after;
+	__atomic_fetch_and(&dec->acked_tasks, ~(1u << task_id), __ATOMIC_SEQ_CST);
+	t->mb_bound = BOUND_UNKNOWN;
+	__atomic_store_n(&dec->task_bounds[task_id], BOUND_UNKNOWN, __ATOMIC_RELAXED);
 	dec->busy_tasks |= 1 << task_id;
 	dec->pending_tasks |= 1 << task_id;
 	dec->task_dependencies[task_id] = refs_to_mask(t);
 	// FIXME check against dependencies on non-reference slots
 	dec->taskPics[task_id] = dec->currPic;
 	dec->task_seq[task_id] = dec->next_task_seq++;
-	dec->ready_tasks |= ((dec->task_dependencies[task_id] & ~usable_frames(dec)) == 0) << task_id;
-	ret = print_dec(dec, dec->n_threads || dec->worker_loop != worker_loop_log ?
-		"  decode_NAL_result: %s\n" : t->pps.entropy_coding_mode_flag ?
-		"  macroblocks_cabac:\n" : "  macroblocks_cavlc:\n", 0);
+	dec->held_task = task_id;
 	if (dec->n_threads) {
+		dec->ready_tasks = ready_tasks(dec);
 		// A reference that has no writer left can only be completed by
 		// concealing it, which no other event may trigger before the workers,
 		// taking the oldest pending task first, all wait for this one.
 		if (!(dec->ready_tasks >> task_id & 1))
 			release_terminal_task_dependencies(dec);
 		pthread_cond_signal(&dec->task_ready);
-	} else {
-		if (!dec->ready_tasks) {
-			// Keep damaged-stream concealment deterministic across threading
-			// modes. A terminal incomplete dependency has no writer here either;
-			// conceal it before falling back to the historical force-run valve.
-			release_terminal_task_dependencies(dec);
-			if (!dec->ready_tasks) {
-				// ready_tasks can also be 0 when task_dependencies includes the
-				// current frame's own slot in a transitional state.
-				dec->ready_tasks |= 1 << task_id;
-			}
-		}
-		dec->worker_loop(dec);
 	}
-	return ret;
+	return print_dec(dec, "  decode_NAL_result: %s\n", 0);
 }
 
 

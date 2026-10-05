@@ -36,6 +36,9 @@
 !tests/gen_incomplete_ref_dependency.py
 !tests/gen_slice_deblock_offsets.py
 !tests/gen_gap_reference.py
+!tests/gen_overlapping_slices.py
+!tests/gen_reversed_slices.py
+!tests/gen_reordered_damaged_slices.py
 !tests/conformance_check.c
 !tests/conformance
 !tests/conformance/2d

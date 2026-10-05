@@ -151,6 +151,7 @@ static Edge264MvcDecoder *alloc_decoder(int n_threads, Edge264MvcLogCb log_cb, v
 	memset(dec, 0, sizeof(*dec));
 	dec->log_base_us = get_relative_time_us();
 	dec->currPic = dec->basePic = -1;
+	dec->held_task = -1;
 	dec->PrevRefFrameNum[0] = dec->PrevRefFrameNum[1] = dec->prevFrameId = -1;
 	dec->taskPics_v = dec->get_frame_queue_v[0] = dec->get_frame_queue_v[1] = set8(-1);
 	dec->n_threads = n_threads;
@@ -312,32 +313,36 @@ static void free_decoder(Edge264MvcDecoder **pdec) {
 			// without joining (and destroying the mutex/conds while threads still
 			// wait on them) is POSIX UB and deadlocks in pthread_cond_destroy.
 			pthread_mutex_lock(&dec->lock);
+			release_held_task(dec, INT_MAX); // a slice decoded whole waits for its bound
 			dec->shutdown = 1;
 			pthread_cond_broadcast(&dec->task_ready);
 			pthread_mutex_unlock(&dec->lock);
 			for (int i = 0; i < dec->n_threads; i++)
 				pthread_join(dec->threads[i], NULL);
-			// Workers exit at shutdown without running tasks that were created but
-			// not yet taken (pending_tasks); unlike the flush path, which waits on
-			// busy_tasks, nothing drains them. Call each pending task's unref_cb so
-			// a copied slice NAL (internal_unref_nal) is freed, not leaked here.
-			for (unsigned p = dec->pending_tasks; p; p &= p - 1) {
-				int task_id = __builtin_ctz(p);
-				if (dec->tasks[task_id].unref_cb)
-					dec->tasks[task_id].unref_cb(ECANCELED, dec->tasks[task_id].unref_arg);
-			}
 			pthread_mutex_destroy(&dec->lock);
 			pthread_cond_destroy(&dec->task_ready);
 			for (int i = 0; i < 32; i++)
 				pthread_cond_destroy(&dec->frame_progress[i]);
 			pthread_cond_destroy(&dec->task_complete);
 		}
+		// Workers exit at shutdown without running tasks that were created but
+		// not yet taken (pending_tasks), and the held slice task waits for a NAL
+		// that never comes in either mode; unlike the flush path, which waits on
+		// busy_tasks, nothing drains them. Call each pending task's unref_cb so
+		// a copied slice NAL (internal_unref_nal) is freed, not leaked here.
+		for (unsigned p = dec->pending_tasks; p; p &= p - 1) {
+			int task_id = __builtin_ctz(p);
+			if (dec->tasks[task_id].unref_cb)
+				dec->tasks[task_id].unref_cb(ECANCELED, dec->tasks[task_id].unref_arg);
+		}
 		for (int i = 0; i < 32; i++) {
 			if (dec->samples_buffers[i] != NULL)
 				dec->free_cb(dec->samples_buffers[i], dec->mb_buffers[i], dec->alloc_arg);
 		}
-		for (int i = 0; i < 17; i++)
+		for (int i = 0; i < 17; i++) {
 			free(dec->mbc_ring_allocs[i]);
+			free(dec->spec_rows_allocs[i]);
+		}
 		aligned_free(dec);
 	}
 }
@@ -427,6 +432,20 @@ static int decode_nal(Edge264MvcDecoder *dec, const uint8_t *buf, const uint8_t 
 		return EINVAL;
 	if (dec->n_threads)
 		pthread_mutex_lock(&dec->lock);
+
+	// Release the held slice as soon as this NAL shows where it ends, before the
+	// output queue check below may send the caller to drain frames meanwhile: a
+	// NAL other than a slice or a slice prefix ends it, and so does a slice
+	// starting at macroblock 0 (first_mb_in_slice is ue(v), 0 being a single 1
+	// bit), which could only give it no bound. The 3-byte header extension of a
+	// type 20 slice is read only when no emulation prevention byte can shift it.
+	if (buf < end) {
+		int type = buf[0] & 0x1f;
+		const uint8_t *first_mb = buf + (type == 20 ? 4 : 1);
+		if (type != 14 && (!(0x100022 >> type & 1) ||
+			(first_mb < end && *first_mb & 0x80 && (type != 20 || ((buf[1] | buf[2]) && (buf[2] | buf[3]))))))
+			release_held_task(dec, INT_MAX);
+	}
 
 	// There has to be enough buffer space for any NAL to flush the entire DPB.
 	// get_frame_queue is 16 entries *per view*, and a flush routes base pictures to
@@ -840,7 +859,7 @@ static int get_frame(Edge264MvcDecoder *dec, Edge264MvcOutput *out, int borrow) 
 	// frame is waiting on. Yield once to a worker instead; the caller's drain
 	// loop retries and the hold resolves as soon as the dependency completes.
 	// Only fires at fullness, so pipelined non-blocking draining is unaffected.
-	if (res != 0 && !dropped_orphan && dec->n_threads && dec->busy_tasks) {
+	if (res != 0 && !dropped_orphan && dec->n_threads && (dec->busy_tasks & ~held_tasks(dec))) {
 		int q0 = __builtin_ctz(movemask(dec->get_frame_queue_v[0]) | 1 << 16);
 		int q1 = __builtin_ctz(movemask(dec->get_frame_queue_v[1]) | 1 << 16);
 		int bumpable = max(1, __builtin_popcount(dec->to_get_frames & ~dec->output_frames));
@@ -1019,7 +1038,7 @@ int edge264mvc_receive_frame(Edge264MvcDecoder *dec, Edge264MvcFrame *frame) {
 		// completed the frame since get_frame looked.
 		if (dec->want_frame && dec->n_threads) {
 			pthread_mutex_lock(&dec->lock);
-			int busy = dec->busy_tasks != 0;
+			int busy = (dec->busy_tasks & ~held_tasks(dec)) != 0; // the held slice waits for a NAL
 			if (busy)
 				pthread_cond_wait(&dec->task_complete, &dec->lock);
 			pthread_mutex_unlock(&dec->lock);

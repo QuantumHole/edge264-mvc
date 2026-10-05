@@ -223,3 +223,14 @@ multithreaded (`EDGE264MVC_THREADS=8` and `-1`), where these deadlocks surface.
   undecoded samples, multithreaded its task waited forever on its own decoding
   progress. `parse_ref_pic_list_modification` now never substitutes (nor keeps)
   the current picture, and rejects a slice that has no other picture to refer to.
+
+- reordered_damaged_slices.264: a 417-byte stream generated with
+  tests/gen_reordered_damaged_slices.py - one 176x160 IDR picture coded as ten
+  slices of one macroblock row each, sent in the order 1..9, 0 with the last
+  byte of slices 1..9 cut off. A damaged slice does not defer its deblocking
+  turn, and `slice_turn` let it wait for any busy slice of its picture with a
+  lower `first_mb_in_slice` - including slice 0, which arrived after it and
+  which no worker could start while all 8 of them waited this way, so
+  `edge264mvc_send_nal` never returned. A slice now waits only for slices
+  decoded before it, as decoding single-threaded, and the picture is concealed
+  and delivered (1 frame).

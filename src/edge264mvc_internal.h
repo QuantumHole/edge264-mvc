@@ -295,6 +295,7 @@ typedef struct {
 	int32_t plane_size_C;
 	int32_t next_deblock_addr; // INT_MIN..INT_MAX
 	uint32_t first_mb_in_slice; // 0..139263
+	int32_t mb_bound; // first macroblock of the next slice in decoding order if after this one, else INT_MAX (BOUND_UNKNOWN until then)
 	uint32_t prev_long_term_frames;
 	union { int8_t QP[3]; i8x4 QP_s; }; // same as mb
 	Edge264MvcUnrefCb unref_cb; // copy from decode_NAL
@@ -325,6 +326,9 @@ typedef struct Edge264MvcContext {
 	int16_t mby;
 	int32_t CurrMbAddr;
 	int32_t mb_skip_run;
+	int8_t overrun; // the slice decoded past mb_bound before learning it, and is decoded again
+	int8_t task_id;
+	int8_t currPic;
 	uint8_t *samples_mb[3]; // address of top-left byte of each plane in current macroblock
 	Edge264MvcMacroblock * _mb; // backup storage for macro mb
 	Edge264MvcMbCache * _mbc; // backup storage for macro mbc, the ring entry of mb
@@ -445,6 +449,8 @@ struct Edge264MvcDecoder {
 	Edge264MvcMacroblock *mb_buffers[32];
 	void *mbc_ring_allocs[17]; // per worker (thread_id + 1), see Edge264MvcMbCache
 	int32_t mbc_ring_sizes[17];
+	uint8_t *spec_rows_allocs[17]; // per worker, see spec_rows
+	size_t spec_rows_sizes[17];
 	Parser parse_nal_unit[32];
 	pthread_t threads[16];
 	pthread_mutex_t lock;
@@ -505,6 +511,10 @@ struct Edge264MvcDecoder {
 	uint16_t pending_tasks;
 	uint16_t busy_tasks; // bitmask for tasks that are either pending or processed in a thread
 	uint16_t ready_tasks;
+	int8_t held_task; // newest slice task, whose end the next NAL tells (mb_bound), or -1
+	uint16_t acked_tasks; // tasks that know their mb_bound and decode no macroblock past it
+	uint16_t task_after[16]; // older tasks of the same picture whose macroblocks a task may share, to finish first
+	int32_t task_bounds[16]; // mb_bound of each task, written by the parser once known
 	volatile union { uint32_t task_dependencies[16]; i32x4 task_dependencies_v[4]; }; // frames on which each task depends to start
 	union { int8_t taskPics[16]; i8x16 taskPics_v; }; // values of currPic for each task
 	uint64_t deblock_pending_slices; // used entries of deblock_pending
@@ -1330,13 +1340,26 @@ static always_inline int oldest_task(Edge264MvcDecoder *dec, unsigned tasks) {
 static always_inline unsigned usable_frames(Edge264MvcDecoder *c) {
 	return ready_frames(c) | (c->n_threads ? writing_frames(c) : 0);
 }
+#define BOUND_UNKNOWN (INT_MAX - 1) // mb_bound of a slice before the next NAL tells it
+static always_inline unsigned held_tasks(Edge264MvcDecoder *c) {
+	return c->held_task >= 0 ? 1u << c->held_task : 0;
+}
+// Single-threaded, the newest slice task is held until the next NAL bounds it.
+// Multithreaded, it starts at once and learns its bound as it goes (see
+// known_mb_bound and claim_after_older_slices).
 static always_inline unsigned ready_tasks(Edge264MvcDecoder *c) {
 	i32x4 not_ready = ~set32(usable_frames(c));
 	i32x4 a = (c->task_dependencies_v[0] & not_ready) == 0;
 	i32x4 b = (c->task_dependencies_v[1] & not_ready) == 0;
 	i32x4 d = (c->task_dependencies_v[2] & not_ready) == 0;
 	i32x4 e = (c->task_dependencies_v[3] & not_ready) == 0;
-	return c->pending_tasks & movemask(packs16(packs32(a, b), packs32(d, e)));
+	unsigned ready = c->pending_tasks & ~(c->n_threads ? 0 : held_tasks(c)) & movemask(packs16(packs32(a, b), packs32(d, e)));
+	for (unsigned r = ready; r; r &= r - 1) {
+		int i = __builtin_ctz(r);
+		if (c->task_after[i] & c->busy_tasks)
+			ready &= ~(1u << i);
+	}
+	return ready;
 }
 static always_inline unsigned depended_frames(Edge264MvcDecoder *dec) {
 	u32x4 a = dec->task_dependencies_v[0] | dec->task_dependencies_v[1] |

@@ -1689,9 +1689,18 @@ static noinline void CAFUNC(parse_slice_data)
 			}
 		#endif
 		
-		// update flip_bit atomically to signal mb is a priori decoded, otherwise end the slice
+		// end the slice where the next one starts (mb_bound, which a slice started
+		// before the next NAL learns as it goes), then claim the mb by updating
+		// flip_bit atomically, unless an older slice already decoded it
+		if (__builtin_expect(ctx->t.mb_bound == BOUND_UNKNOWN, 0)) {
+			int32_t bound = __atomic_load_n(&ctx->d->task_bounds[ctx->task_id], __ATOMIC_ACQUIRE);
+			if (bound != BOUND_UNKNOWN)
+				known_mb_bound(ctx, bound, 0);
+		}
+		if (ctx->CurrMbAddr >= ctx->t.mb_bound)
+			return;
 		int prev_recovery_bits = __atomic_exchange_n(&mb->recovery_bits, ctx->t.frame_flip_bit, __ATOMIC_ACQ_REL);
-		if (prev_recovery_bits == ctx->t.frame_flip_bit)
+		if (prev_recovery_bits == ctx->t.frame_flip_bit && !claim_after_older_slices(ctx))
 			return;
 		
 		// set and reset neighbouring pointers depending on their availability
