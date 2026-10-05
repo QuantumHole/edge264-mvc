@@ -420,15 +420,18 @@ static void initialize_context(Edge264MvcContext *ctx, int currPic)
 			// initializations for temporal prediction and implicit weights
 			int rangeL1 = ctx->t.pps.num_ref_idx_active[1];
 			if (ctx->t.pps.weighted_bipred_idc == 2 || (rangeL1 = 1, !ctx->t.direct_spatial_mv_pred_flag)) {
-				tb.v[0] = packs16(ctx->t.diff_poc_v[0], ctx->t.diff_poc_v[1]);
-				tb.v[1] = packs16(ctx->t.diff_poc_v[2], ctx->t.diff_poc_v[3]);
+				// tb and td are clipped to 8 bits only now (8.4.1.2.3), from distances
+				// subtracted modulo 2^32, so that two large ones cannot wrap their difference
+				const i32x4 *d = ctx->t.diff_poc_v;
+				tb.v[0] = packs16(packs32(d[0], d[1]), packs32(d[2], d[3]));
+				tb.v[1] = packs16(packs32(d[4], d[5]), packs32(d[6], d[7]));
 				ctx->MapPicToList0_v[0] = ctx->MapPicToList0_v[1] = (i8x16){}; // FIXME pictures not found in RefPicList0 should point to self
 				for (int refIdxL0 = ctx->t.pps.num_ref_idx_active[0], DistScaleFactor = 0; refIdxL0-- > 0; ) {
 					int pic0 = ctx->t.RefPicList[0][refIdxL0];
 					ctx->MapPicToList0[pic0] = refIdxL0;
-					i16x8 diff0 = set16(ctx->t.diff_poc[pic0]);
-					td.v[0] = packs16(diff0 - ctx->t.diff_poc_v[0], diff0 - ctx->t.diff_poc_v[1]);
-					td.v[1] = packs16(diff0 - ctx->t.diff_poc_v[2], diff0 - ctx->t.diff_poc_v[3]);
+					u32x4 diff0 = set32(ctx->t.diff_poc[pic0]);
+					td.v[0] = packs16(packs32(diff0 - d[0], diff0 - d[1]), packs32(diff0 - d[2], diff0 - d[3]));
+					td.v[1] = packs16(packs32(diff0 - d[4], diff0 - d[5]), packs32(diff0 - d[6], diff0 - d[7]));
 					for (int refIdxL1 = rangeL1, implicit_weight; refIdxL1-- > 0; ) {
 						int pic1 = ctx->t.RefPicList[1][refIdxL1];
 						if (td.q[pic1] != 0 && !(ctx->t.prev_long_term_frames & 1u << pic0)) {
@@ -1525,15 +1528,10 @@ static void initialize_task(Edge264MvcDecoder *dec, Edge264MvcSeqParameterSet *s
 	if (t->slice_type == 1) { // B slices
 		t->mbCol_buffer = (Edge264MvcMacroblock *)dec->mb_buffers[t->RefPicList[1][0]];
 		if (t->pps.weighted_bipred_idc == 2 || !t->direct_spatial_mv_pred_flag) {
+			// distances from the current picture, unclipped (see initialize_context)
 			u32x4 poc = set32(minw(dec->TopFieldOrderCnt, dec->BottomFieldOrderCnt));
-			t->diff_poc_v[0] = packs32(poc - minw32(dec->FieldOrderCnt_v[0][0], dec->FieldOrderCnt_v[1][0]),
-			                           poc - minw32(dec->FieldOrderCnt_v[0][1], dec->FieldOrderCnt_v[1][1]));
-			t->diff_poc_v[1] = packs32(poc - minw32(dec->FieldOrderCnt_v[0][2], dec->FieldOrderCnt_v[1][2]),
-			                           poc - minw32(dec->FieldOrderCnt_v[0][3], dec->FieldOrderCnt_v[1][3]));
-			t->diff_poc_v[2] = packs32(poc - minw32(dec->FieldOrderCnt_v[0][4], dec->FieldOrderCnt_v[1][4]),
-			                           poc - minw32(dec->FieldOrderCnt_v[0][5], dec->FieldOrderCnt_v[1][5]));
-			t->diff_poc_v[3] = packs32(poc - minw32(dec->FieldOrderCnt_v[0][6], dec->FieldOrderCnt_v[1][6]),
-			                           poc - minw32(dec->FieldOrderCnt_v[0][7], dec->FieldOrderCnt_v[1][7]));
+			for (int i = 0; i < 8; i++)
+				t->diff_poc_v[i] = poc - minw32(dec->FieldOrderCnt_v[0][i], dec->FieldOrderCnt_v[1][i]);
 		}
 	}
 }

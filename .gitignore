@@ -54,6 +54,7 @@
 !tests/gen_idr_after_long_term.py
 !tests/gen_cavlc_ac_overflow.py
 !tests/gen_conceal_wide_islice.py
+!tests/gen_implicit_weight_far_poc.py
 !tests/conformance_check.c
 !tests/conformance
 !tests/conformance/2d

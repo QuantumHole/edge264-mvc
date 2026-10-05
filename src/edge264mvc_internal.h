@@ -305,7 +305,7 @@ typedef struct {
 	uint8_t *samples_buffers[32];
 	union { uint16_t samples_clip[3][8]; i16x8 samples_clip_v[3]; }; // [iYCbCr], maximum sample value
 	union { int8_t RefPicList[2][32]; int64_t RefPicList_l[8]; i8x16 RefPicList_v[4]; };
-	union { int16_t diff_poc[32]; i16x8 diff_poc_v[4]; };
+	union { int32_t diff_poc[32]; i32x4 diff_poc_v[8]; };
 	Edge264MvcPicParameterSet pps;
 	int16_t explicit_weights[3][64]; // [iYCbCr][LX][RefIdx]
 	int8_t explicit_offsets[3][64];

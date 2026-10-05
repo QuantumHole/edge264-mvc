@@ -166,3 +166,9 @@ Without the fix this line FAILs.
 Guards the concealment of a damaged I slice on x86. Two CAVLC IDR pictures of 140x1 I_PCM macroblocks with deblocking, each a single slice that codes one macroblock more than the picture has, so that it fails at its end (`tests/gen_conceal_wide_islice.py`). The concealment blends the macroblocks of the last row of a damaged I slice with their DC prediction, each by an error probability that grows from the start of the slice; in a slice this long the first macroblock gets the weight 0. The SSE blend multiplies with signed 8-bit weights, where the 128 for the decoded samples reads as -128, so that macroblock came out with all samples 0, while the NEON and generic builds kept it as decoded; the blend is now skipped for it. Concealment has no reference decoder: the hash is the output of the generic C backend (`-DSIMD=4`), which the SSE and NEON builds match.
 
 Without the fix this line FAILs.
+
+## `implicit_weight_far_poc.264`
+
+Guards the picture order count distances of implicit weighted bi-prediction. A 32x32 Main profile stream with `weighted_bipred_idc` 2: an IDR picture at POC 0 and a P picture at POC 32767, both of I_PCM macroblocks with distinct samples, then a B picture of skipped macroblocks at POC 65534 (`tests/gen_implicit_weight_far_poc.py`). Its reference lists start with the P picture and the IDR picture, so 8.4.2.3.1 uses `tb` = 32767 and `td` = -32767, which 8.2.1 allows, clipped to 127 and -128. The decoder clipped each distance from the B picture to 16 bits before subtracting them, so the 65534 to the IDR picture became 32767 and `td` came out 0, which blends both references equally. The distances are now kept in 32 bits and clipped once. The hash is anchored to the JM reference decoder, which FFmpeg matches.
+
+Without the fix this line FAILs.
