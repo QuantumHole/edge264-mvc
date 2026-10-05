@@ -630,7 +630,8 @@ endif
 # a file it cannot open, a file named without the .264 suffix and a directory
 # it cannot list (unless run as root, who may list it); and a trace it cannot
 # write (here trace.yaml is a directory) must end it with exit 1, not a crash.
-# Linux only, like the stub.
+# -b must report a peak memory of at least 1 MB for a decode. Linux only, like
+# the stub.
 .PHONY: check-test-results
 check-test-results: edge264mvc_test$(EXE)
 ifeq ($(OS),linux)
@@ -638,6 +639,8 @@ ifeq ($(OS),linux)
 	  (cd harness_trace && $(TIMEOUT) ../edge264mvc_test$(EXE) -v -y ../tests/conformance/2d/CABA3_Sony_C.264 > /dev/null 2>&1); \
 	  status=$$?; rm -rf harness_trace; \
 	  test $$status -eq 1 || { echo "edge264mvc_test results check FAILED (an unwritable trace gave exit status $$status)"; exit 1; }
+	$(Q)mem=$$(./edge264mvc_test$(EXE) -b -y tests/conformance/2d/CABA3_Sony_C.264 2>&1 | sed -n 's/^memory: \([0-9.]*\)MB$$/\1/p'); \
+	  awk "BEGIN { exit !($${mem:-0} >= 1) }" || { echo "edge264mvc_test results check FAILED (-b reported $${mem:-no} MB of peak memory)"; exit 1; }
 	$(Q)if [ "$$(id -u)" != 0 ]; then rm -rf harness_dir && mkdir harness_dir && chmod 111 harness_dir && \
 	  { $(TIMEOUT) ./edge264mvc_test$(EXE) harness_dir > /dev/null 2>&1; status=$$?; chmod 755 harness_dir; rm -rf harness_dir; \
 	  test $$status -eq 1 || { echo "edge264mvc_test results check FAILED (an unlistable directory gave exit status $$status)"; exit 1; }; }; fi

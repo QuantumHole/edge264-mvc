@@ -1058,7 +1058,7 @@ int main(int argc, char *argv[])
 		clock_gettime(CLOCK_MONOTONIC, &t1);
 		int64_t time_msec = (int64_t)(t1.tv_sec - t0.tv_sec) * 1000 + (t1.tv_nsec - t0.tv_nsec) / 1000000;
 		int64_t cpu_msec = 0;
-		long mem_kb = 0;
+		double mem_bytes = 0; // the peak memory of the process
 		#if defined(_WIN32)
 			HANDLE p = GetCurrentProcess();
 			FILETIME c, e, k, u;
@@ -1066,14 +1066,18 @@ int main(int argc, char *argv[])
 			cpu_msec = ((int64_t)u.dwHighDateTime << 32 | u.dwLowDateTime) / 10000;
 			PROCESS_MEMORY_COUNTERS m;
 			GetProcessMemoryInfo(p, &m, sizeof(m));
-			mem_kb = m.PeakPagefileUsage / 1000;
+			mem_bytes = m.PeakPagefileUsage;
 		#elif !defined(__wasm__)
 			struct rusage rusage;
 			getrusage(RUSAGE_SELF, &rusage);
 			cpu_msec = (int64_t)rusage.ru_utime.tv_sec * 1000 + rusage.ru_utime.tv_usec / 1000;
-			mem_kb = rusage.ru_maxrss / 1000;
+			#ifdef __APPLE__
+				mem_bytes = rusage.ru_maxrss; // in bytes on macOS
+			#else
+				mem_bytes = rusage.ru_maxrss * 1024.0; // in KiB on Linux and the BSDs
+			#endif
 		#endif
-		fprintf(msg, "time: %.3lfs\nCPU: %.3lfs\nmemory: %.3lfMB\n", (double)time_msec / 1000, (double)cpu_msec / 1000, (double)mem_kb / 1000);
+		fprintf(msg, "time: %.3lfs\nCPU: %.3lfs\nmemory: %.3lfMB\n", (double)time_msec / 1000, (double)cpu_msec / 1000, mem_bytes / 1000000);
 	}
 	if (trace_file)
 		fclose(trace_file);
