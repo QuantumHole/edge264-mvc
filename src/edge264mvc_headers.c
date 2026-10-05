@@ -2827,11 +2827,12 @@ static void parse_vui_parameters(Edge264MvcDecoder *dec, Edge264MvcSeqParameterS
 static void parse_mvc_vui_parameters_extension(Edge264MvcDecoder *dec, Edge264MvcSeqParameterSet *sps)
 {
 	log_dec(dec, "  vui_mvc_operation_points:\n");
-	for (int i = get_ue16(&dec->gb, 1023); i-- >= 0;) {
+	// stop at the end of a damaged NAL, past which each count reads as its largest value
+	for (int i = get_ue16(&dec->gb, 1023); i-- >= 0 && bits_left(&dec->gb) >= 0;) {
 		int temporal_id = get_uv(&dec->gb, 3);
 		log_dec(dec, "  - temporal_id: %u\n"
 			"    target_views: [", temporal_id);
-		for (int j = get_ue16(&dec->gb, 1023); j >= 0; j--) {
+		for (int j = get_ue16(&dec->gb, 1023); j >= 0 && bits_left(&dec->gb) >= 0; j--) {
 			int view_id = get_ue16(&dec->gb, 1023);
 			log_dec(dec, j ? "%u," : "%u]\n", view_id);
 		}
@@ -2899,15 +2900,17 @@ static int parse_seq_parameter_set_mvc_extension(Edge264MvcDecoder *dec, int pro
 		num_anchor_refs_l0, num_anchor_refs_l1,
 		num_non_anchor_refs_l0, num_non_anchor_refs_l1);
 	
-	// level values and operation points are similarly ignored
-	for (int i = get_ue16(&dec->gb, 63); i >= 0; i--) {
+	// level values and operation points are similarly ignored; past the end of a
+	// damaged NAL each count reads as its largest value, so stop there rather than
+	// loop up to 64 x 1024 x 1024 times on clamped values
+	for (int i = get_ue16(&dec->gb, 63); i >= 0 && bits_left(&dec->gb) >= 0; i--) {
 		int level_idc = get_uv(&dec->gb, 8);
 		log_dec(dec, "  - idc: %.1f\n"
 			"    operation_points: [", (float)level_idc / 10);
-		for (int j = get_ue16(&dec->gb, 1023); j >= 0; j--) {
+		for (int j = get_ue16(&dec->gb, 1023); j >= 0 && bits_left(&dec->gb) >= 0; j--) {
 			int applicable_op_temporal_id = get_uv(&dec->gb, 3);
 			log_dec(dec, "{temporal_id: %u, target_views: [", applicable_op_temporal_id);
-			for (int k = get_ue16(&dec->gb, 1023); k >= 0; k--) {
+			for (int k = get_ue16(&dec->gb, 1023); k >= 0 && bits_left(&dec->gb) >= 0; k--) {
 				int applicable_op_target_view_id = get_ue16(&dec->gb, 1023);
 				log_dec(dec, k ? "%u," : "%u], num_views: ", applicable_op_target_view_id);
 			}
