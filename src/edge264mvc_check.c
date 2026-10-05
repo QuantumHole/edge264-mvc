@@ -391,6 +391,33 @@ static void test_inter_decoding() {
 	assert_block("INTER_CHROMA_8x16", 16, dst, 4, 16, (uint8_t[]){136, 173, 210, 107, 145, 182, 219, 116, 154, 191, 228, 41, 163, 200, 237, 50, 172, 209, 106, 39, 181, 218, 115, 48, 190, 227, 40, 45, 199, 236, 49, 54, 208, 105, 38, 63, 217, 114, 47, 72, 226, 39, 44, 81, 235, 48, 53, 90, 244, 57, 62, 99, 113, 46, 71, 108, 122, 55, 80, 117, 47, 52, 89, 126});
 	decode_inter_chroma(BLEND_WEIGHTED, 0, 4, 8, 21, src + 44, 16, dst, ABCD, wod);
 	assert_block("INTER_CHROMA_4x8", 16, dst, 2, 8, (uint8_t[]){136, 173, 145, 182, 154, 191, 163, 200, 172, 209, 181, 218, 190, 227, 199, 236});
+	
+	// the 2D half-sample position j (8.4.2.2.1) on rows and columns alternating
+	// between the extremes of the 6-tap filter, where its intermediate sums are
+	// largest, against a plain C computation of the formula
+	static const uint8_t pattern[6] = {255, 0, 255, 255, 0, 255};
+	for (int i = 0; i < 21; i++) {
+		for (int j = 0; j < 21; j++)
+			src[i * 21 + j] = (pattern[i % 6] ^ pattern[j % 6]) ? 0 : 255;
+	}
+	static const int modes[3] = {INTER_4xH_QPEL_22, INTER_8xH_QPEL_22, INTER_16xH_QPEL_22};
+	for (int m = 0; m < 3; m++) {
+		int w = 4 << m;
+		uint8_t expect[256];
+		for (int y = 0; y < 8; y++) {
+			for (int x = 0; x < w; x++) {
+				int j1 = 0;
+				for (int v = 0; v < 6; v++) {
+					const uint8_t *r = src + 44 + (y + v - 2) * 21 + x;
+					int b1 = r[-2] - 5 * r[-1] + 20 * r[0] + 20 * r[1] - 5 * r[2] + r[3];
+					j1 += b1 * (v == 0 || v == 5 ? 1 : v == 1 || v == 4 ? -5 : 20);
+				}
+				expect[y * w + x] = clip3(0, 255, (j1 + 512) >> 10);
+			}
+		}
+		decode_inter_luma(modes[m], BLEND_WEIGHTED, 8, 21, src + 44, 16, dst, (i8x16){0, 1});
+		assert_block(m == 0 ? "INTER_4xH_QPEL_22 (extremes)" : m == 1 ? "INTER_8xH_QPEL_22 (extremes)" : "INTER_16xH_QPEL_22 (extremes)", 16, dst, w, 8, expect);
+	}
 	count_pass += 1;
 }
 

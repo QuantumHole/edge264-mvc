@@ -943,6 +943,7 @@ static const int8_t shz_mask[48] = {
 	#endif
 #elif SIMD == NEON
 	#define abs8(a) (u8x16)vabsq_s8(a)
+	#define adds16(a, b) (i16x8)vqaddq_s16(a, b)
 	#define abs16(a) (u16x8)vabsq_s16(a)
 	#define avgu8(a, b) (u8x16)vrhaddq_u8(a, b)
 	#define combine64(a, b) (i64x2)vcombine_s8(vget_low_s8(a), vget_high_s8(b))
@@ -1060,6 +1061,7 @@ static const int8_t shz_mask[48] = {
 	#define shuffle2z shuffle2
 #elif SIMD == WASM
 	#define abs8(a) (u8x16)wasm_i8x16_abs(a)
+	#define adds16(a, b) (i16x8)wasm_i16x8_add_sat(a, b)
 	#define abs16(a) (u16x8)wasm_i16x8_abs(a)
 	#define avgu8(a, b) (u8x16)wasm_u8x16_avgr(a, b)
 	// using shufflevector instead of wasm_i8x16_shuffle lets clang eliminate (i8x16){}

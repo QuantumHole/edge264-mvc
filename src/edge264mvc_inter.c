@@ -59,7 +59,9 @@ static always_inline i16x8 sixtapHV(i16x8 a, i16x8 b, i16x8 c, i16x8 d, i16x8 e,
 	i16x8 af = a + f;
 	i16x8 be = b + e;
 	i16x8 cd = c + d;
-	return ((((af - be) >> 2) + (cd - be)) >> 2) + cd;
+	// reason: this sum reaches 33,150 on extreme samples; where it saturates the
+	// result is clipped to 0 or 255 anyway, so saturating keeps it exact
+	return ((adds16((af - be) >> 2, cd - be)) >> 2) + cd;
 }
 
 #if SIMD == SSE
