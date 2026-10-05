@@ -418,9 +418,10 @@ static int keep_decoding(int res)
 	// never reaches the dependent view.
 	//
 	// It likewise skips a corrupt NAL (EBADMSG), which the API documents as
-	// "decoding may proceed but could show visual artefacts": a rip with one
-	// damaged slice should cost a glitched frame, not the rest of the movie. Only
-	// without a conformance pair, where EBADMSG also reports an output mismatch.
+	// "skipped and the pictures it belonged to are concealed; send the next
+	// one": a rip with one damaged slice should cost a glitched frame, not the
+	// rest of the movie. Only without a conformance pair, where EBADMSG also
+	// reports an output mismatch.
 	if (res == EBADMSG && skip_unsupported && conf[0] == NULL) {
 		// Locate the damage for the user. Output trails decoding by the reorder
 		// delay, so this is the last delivered frame, a few frames before the
@@ -504,17 +505,11 @@ static int decode_mapped_input(const uint8_t *buf, const uint8_t *end0, const ch
 			else
 				pos = next + delimiter;
 		}
-		// Progress guard (the caller contract requires one so ENOBUFS cannot
-		// spin forever). A DPB that fills with unfinished pictures before
-		// end-of-stream rejects every further NAL with ENOBUFS while get_frame
-		// drains nothing: those held pictures only come out once `flushing` lets
-		// get_frame's valve emit them. Feeding the flush sentinel (buf >= end) is
-		// not enough on its own - decode_NAL returns ENOBUFS at its fullness gate
-		// before reaching the buf>=end path that would set `flushing`, so the
-		// sentinel never arms it. Set `flushing` here, then end the stream
-		// (at_end). Inert on well-formed streams (every ENOBUFS there drains
-		// at least one frame, resetting the counter); when it fires, the file
-		// FAILs (see finish_decode_result).
+		// Progress guard: every round of EDGE264MVC_AGAIN (ENOBUFS here) must
+		// make progress (a frame, or a dropped picture that cannot be output),
+		// so 64 rounds in a row without a frame mark a decoder fault. The guard
+		// then ends the stream (at_end), which outputs what was decoded, and the
+		// file FAILs (see finish_decode_result).
 		stuck = (res == ENOBUFS && drained == 0) ? stuck + 1 : 0;
 		if (stuck > 64) { at_end = 1; stuck = 0; stalled = 1; } // give up and end the stream
 	} while (keep_decoding(res));
