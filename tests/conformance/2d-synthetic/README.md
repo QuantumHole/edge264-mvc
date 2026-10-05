@@ -107,9 +107,9 @@ Without the fix this line FAILs single-threaded (slice A wins) and, depending on
 
 ## `reversed_slices.264`
 
-Guards slices of one picture that arrive out of address order. The pictures of `slice_deblock_offsets.264` with their four slices sent in reverse order (`tests/gen_reversed_slices.py`); arbitrary slice order is legal only in Baseline profile, so for this CABAC stream it is damaged input. A slice used to wait for any busy slice of its picture with a lower `first_mb_in_slice`, including one that arrived after it, and was then deblocked with its own filter offsets, while decoding single-threaded the same slice is left to the end of the picture. The output thus depended on the thread timing. A slice now waits only for slices decoded before it, and a slice whose macroblocks may overlap those of an older slice still being decoded starts after it, as it would single-threaded. The hash is anchored to the single-threaded decode.
+Guards slices of one picture that arrive out of address order. The pictures of `slice_deblock_offsets.264` with their four slices sent in reverse order (`tests/gen_reversed_slices.py`); arbitrary slice order is legal only in Baseline profile, so for this CABAC stream it is damaged input. Deblocking runs over the whole picture in macroblock order, each macroblock with the filter offsets of its own slice (8.7, 8.7.2.2), so the order of the slices does not change the output, and the hash is the one of `slice_deblock_offsets.264`, which is anchored to FFmpeg. A slice used to wait for any busy slice of its picture with a lower `first_mb_in_slice`, including one that arrived after it, so with worker threads the output varied from run to run; a slice now waits only for slices decoded before it. And a slice decoded before a lower one was deblocked with the offsets of the slice that completed the picture; every macroblock now keeps the offsets of its slice.
 
-Without the fix this line FAILs under `EDGE264MVC_THREADS`, with a different output from run to run.
+Without the fixes this line FAILs, single-threaded and under `EDGE264MVC_THREADS`.
 
 ## `overrun_reference.264`
 

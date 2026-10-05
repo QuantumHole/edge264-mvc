@@ -942,13 +942,16 @@ static noinline void deblock_mb(Edge264MvcContext *ctx)
 	mbA = (mb->filter_edges & 1) ? mb - 1 : mb;
 	mbB = (mb->filter_edges & 2) ? mb - 1 - ctx->t.pic_width_in_mbs : mb;
 	i8x16 zero = {};
-	i8x16 qP = set32((int32_t)mb->QP_s);
-	i32x4 qPAB = {(int32_t)mbA->QP_s, (int32_t)mbB->QP_s};
+	i8x16 qP = set32((int32_t)mb->QP_s & 0xffffff);
+	i32x4 qPAB = {(int32_t)mbA->QP_s & 0xffffff, (int32_t)mbB->QP_s & 0xffffff};
 	i8x16 qPav = avgu8(qP, ziplo64(qP, qPAB)); // mid/mid/A/B
 	i8x16 c51 = set8(51);
+	// the offsets of the slice containing the macroblock (8.7.2.2)
+	int FilterOffsetA = ((int8_t)(mb->QP[3] << 4) >> 4) * 2;
+	int FilterOffsetB = ((int8_t)mb->QP[3] >> 4) * 2;
 	// ARM64 can use vsqaddq_u8 here but this is not critical
-	i8x16 indexA = minu8(max8(qPav + set8(ctx->t.FilterOffsetA), zero), c51);
-	i8x16 indexB = minu8(max8(qPav + set8(ctx->t.FilterOffsetB), zero), c51);
+	i8x16 indexA = minu8(max8(qPav + set8(FilterOffsetA), zero), c51);
+	i8x16 indexB = minu8(max8(qPav + set8(FilterOffsetB), zero), c51);
 	i8x16 c4 = set8(4);
 	i8x16 Am4 = subsu8(indexA, c4);
 	ctx->alpha_v = shuffle3((const i8x16 *)idx2alpha, Am4);

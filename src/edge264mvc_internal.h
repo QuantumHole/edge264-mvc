@@ -168,7 +168,7 @@ typedef struct {
 	int8_t recovery_bits; // bit 0 is flipped for each new frame, bit 1 signals error
 	int8_t mbIsInterFlag;
 	int8_t filter_edges; // bits 0-1 enable deblocking of A/B edges, bit 2 signals that deblocking is pending
-	union { uint8_t QP[3]; i8x4 QP_s; }; // [iYCbCr]
+	union { uint8_t QP[4]; i8x4 QP_s; }; // [iYCbCr], then FilterOffsetA / 2 and FilterOffsetB / 2 in 4 bits each
 	union { uint32_t bits[2]; uint64_t bits_l; }; // {cbp/ref_idx_nz, cbf_Y/Cb/Cr 8x8}
 	union { int8_t nC_Y[16]; i8x16 nC_Y_v; }; // copy of the luma nC for deblocking
 	// fields used by mbCol thus kept together for slice prefetching (do not reorder!)
@@ -297,7 +297,7 @@ typedef struct {
 	uint32_t first_mb_in_slice; // 0..139263
 	int32_t mb_bound; // first macroblock of the next slice in decoding order if after this one, else INT_MAX (BOUND_UNKNOWN until then)
 	uint32_t prev_long_term_frames;
-	union { int8_t QP[3]; i8x4 QP_s; }; // same as mb
+	union { int8_t QP[4]; i8x4 QP_s; }; // same as mb
 	Edge264MvcUnrefCb unref_cb; // copy from decode_NAL
 	void *unref_arg; // copy from decode_NAL
 	Edge264MvcMacroblock *mb_buffer;
@@ -425,9 +425,6 @@ typedef int (*Parser)(Edge264MvcDecoder *dec, Edge264MvcUnrefCb unref_cb, void *
 typedef struct {
 	int8_t pic;
 	int8_t deblock;
-	int8_t entropy_coding_mode_flag;
-	int8_t FilterOffsetA;
-	int8_t FilterOffsetB;
 	int32_t first_mb;
 	int32_t keep_mb;
 } Edge264MvcPendingSlice; // a decoded slice left for another thread to deblock and publish in order

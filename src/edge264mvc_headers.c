@@ -706,9 +706,6 @@ static int slice_turn(Edge264MvcContext *c, int currPic, uint32_t seq, int keep_
 				dec->deblock_pending[i] = (Edge264MvcPendingSlice){
 					.pic = currPic,
 					.deblock = c->t.disable_deblocking_filter_idc == 0,
-					.entropy_coding_mode_flag = c->t.pps.entropy_coding_mode_flag,
-					.FilterOffsetA = c->t.FilterOffsetA,
-					.FilterOffsetB = c->t.FilterOffsetB,
 					.first_mb = first,
 					.keep_mb = keep_mb,
 				};
@@ -746,12 +743,8 @@ static void process_pending_slices(Edge264MvcContext *c, int currPic, int32_t fr
 		Edge264MvcPendingSlice s = dec->deblock_pending[slot];
 		dec->deblock_pending_slices &= ~((uint64_t)1 << slot);
 		pthread_mutex_unlock(&dec->lock);
-		if (s.deblock) {
-			c->t.FilterOffsetA = s.FilterOffsetA;
-			c->t.FilterOffsetB = s.FilterOffsetB;
-			c->t.pps.entropy_coding_mode_flag = s.entropy_coding_mode_flag;
+		if (s.deblock)
 			deblock_range(c, currPic, s.first_mb, s.keep_mb);
-		}
 		publish_frame_progress(dec, currPic, s.keep_mb);
 		frontier = s.keep_mb;
 	}
@@ -2310,6 +2303,9 @@ int ADD_VARIANT(parse_slice_layer_without_partitioning)(Edge264MvcDecoder *dec, 
 		t->FilterOffsetA = 0;
 		t->FilterOffsetB = 0;
 	}
+	// every macroblock keeps the offsets of its slice next to its QP, for the
+	// deblocking that may run when another slice completes the picture (8.7.2.2)
+	t->QP[3] = (t->FilterOffsetA >> 1 & 15) | (t->FilterOffsetB >> 1) * 16;
 	
 	// add the new frame into the DPB if not done already (C.4.5)
 	if (!(dec->to_get_frames & 1u << dec->currPic)) {

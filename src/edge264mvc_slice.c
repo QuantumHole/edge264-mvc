@@ -419,7 +419,7 @@ static inline void CAFUNC(parse_mb_qp_delta)
 		if (mb_qp_delta) {
 			int sum = ctx->t.QP[0] + mb_qp_delta;
 			int QP_Y = (sum < 0) ? sum + 52 : (sum >= 52) ? sum - 52 : sum;
-			mb->QP_s = ctx->t.QP_s = (i8x4){QP_Y, ctx->QP_C[0][QP_Y], ctx->QP_C[1][QP_Y]};
+			mb->QP_s = ctx->t.QP_s = (i8x4){QP_Y, ctx->QP_C[0][QP_Y], ctx->QP_C[1][QP_Y], ctx->t.QP[3]};
 		}
 	#else
 		int mb_qp_delta_nz = get_ae(ctx, 60 + ctx->mb_qp_delta_nz);
@@ -432,7 +432,7 @@ static inline void CAFUNC(parse_mb_qp_delta)
 			mb_qp_delta = count & 1 ? count / 2 + 1 : -(count / 2);
 			int sum = ctx->t.QP[0] + mb_qp_delta;
 			int QP_Y = (sum < 0) ? sum + 52 : (sum >= 52) ? sum - 52 : sum;
-			mb->QP_s = ctx->t.QP_s = (i8x4){QP_Y, ctx->QP_C[0][QP_Y], ctx->QP_C[1][QP_Y]};
+			mb->QP_s = ctx->t.QP_s = (i8x4){QP_Y, ctx->QP_C[0][QP_Y], ctx->QP_C[1][QP_Y], ctx->t.QP[3]};
 		}
 	#endif
 	log_mb(ctx, "%smb_qp_delta: %d\n", ctx->log_indent, mb_qp_delta);
@@ -907,7 +907,7 @@ static noinline void CAFUNC(parse_I_mb, int mb_type_or_ctxIdx)
 		
 		ctx->mb_qp_delta_nz = 0;
 		mb->f.v |= flags_twice.v; // ChromaDC, ChromaAC and flags_16x16, just what we need :)
-		mb->QP_s = (i8x4){0, ctx->QP_C[0][0], ctx->QP_C[1][0]};
+		mb->QP_s = (i8x4){0, ctx->QP_C[0][0], ctx->QP_C[1][0], ctx->t.QP[3]};
 		mb->bits_l = (uint64_t)(i32x2){0xac, 0xacacac}; // FIXME 4:2:2
 		mbc->nC_v[0] = mbc->nC_v[1] = mbc->nC_v[2] = CACOND(
 			((i8x16){16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16}),
