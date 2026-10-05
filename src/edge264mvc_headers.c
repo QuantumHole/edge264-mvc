@@ -2020,7 +2020,7 @@ int ADD_VARIANT(parse_slice_layer_without_partitioning)(Edge264MvcDecoder *dec, 
 
 	// detect the start of a new frame (7.4.1.2.4)
 	int frame_num_changed = dec->currPic >= 0 && frame_num != (dec->FrameNum & FrameNumMask);
-	int nal_ref_idc_changed = dec->currPic >= 0 && (dec->nal_ref_idc > 0) != dec->currPic_marked;
+	int nal_ref_idc_changed = dec->currPic >= 0 && (dec->nal_ref_idc > 0) != dec->currPic_reference;
 	if (dep_corrupt && (frame_num_changed || nal_ref_idc_changed))
 		return print_dec(dec, "  decode_NAL_result: %s\n", EBADMSG);
 	if (dep_continuation && (frame_num_changed || nal_ref_idc_changed ||
@@ -2286,6 +2286,7 @@ int ADD_VARIANT(parse_slice_layer_without_partitioning)(Edge264MvcDecoder *dec, 
 			(ret = alloc_frame(dec, currPic)))
 			return ret;
 		dec->currPic = currPic;
+		dec->currPic_reference = dec->nal_ref_idc != 0;
 		dec->frame_flags[currPic] = dec->IdrPicFlag ? EDGE264MVC_VIEW_IDR : 0;
 		dec->frame_pts[currPic] = dec->in_pts;
 		dec->frame_user_data[currPic] = dec->in_user_data;

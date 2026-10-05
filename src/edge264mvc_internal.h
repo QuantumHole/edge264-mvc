@@ -468,6 +468,7 @@ struct Edge264MvcDecoder {
 	int8_t IdrPicFlag; // 1 significant bit
 	int8_t currPic; // index of current incomplete frame, or -1
 	int8_t currPic_marked; // the last slice of currPic marked it as reference, even if it then discarded it
+	int8_t currPic_reference; // the first slice of currPic has nal_ref_idc != 0 (7.4.1.2.4)
 	int8_t basePic; // index of last base frame for cross-reference in MVC
 	int8_t hH; // last decoded timestamp hours, 0..23
 	int8_t mM; // last decoded timestamp minutes, 0..59

@@ -56,6 +56,7 @@
 !tests/gen_conceal_wide_islice.py
 !tests/gen_implicit_weight_far_poc.py
 !tests/gen_reflist_num_overflow.py
+!tests/gen_rejected_first_slice.py
 !tests/conformance_check.c
 !tests/conformance
 !tests/conformance/2d

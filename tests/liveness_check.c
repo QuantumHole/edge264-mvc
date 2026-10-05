@@ -14,7 +14,9 @@
 // the test suite. Each fixture is decoded the way a player does: a NAL the
 // decoder rejects (CORRUPT, UNSUPPORTED) is skipped, and the stream is always
 // ended and drained. Manifest lines: "<name> <expected_base_frames>
-// [<expected_rejected_nals>]" (0 when left out).
+// [<expected_rejected_nals> [<base_view_hash>]]" (0 and unchecked when left out,
+// or "-" for the hash; the hash is FNV-1a over the base view's samples in output
+// order, and a FAIL prints the one it got).
 //
 // Self-contained: only edge264mvc.h + libc, like tests/conformance_check.c.
 // Usage: liveness_check run <manifest> <fixtures-dir>
@@ -74,9 +76,19 @@ enum { DECODED, STALLED, OPEN_FAILED, CRASHED, DEADLOCKED };
 typedef struct {
 	int frames;
 	int rejected;
+	uint64_t hash; // FNV-1a of the base view's samples, in output order
 	int status;
 	int signal; // the signal a CRASHED child died of, or 0 if it exited
 } Outcome;
+
+static void hash_frame(Outcome *o, const Edge264MvcFrame *f) {
+	for (int p = 0; p < 3; p++) {
+		int w = p ? f->width_C : f->width_Y, h = p ? f->height_C : f->height_Y, stride = p ? f->stride_C : f->stride_Y;
+		for (int y = 0; y < h; y++)
+			for (int x = 0; x < w; x++)
+				o->hash = (o->hash ^ f->views[0].planes[p][(size_t)y * stride + x]) * 1099511628211ull;
+	}
+}
 
 // Decodes a whole fixture the way a player does: a rejected NAL is skipped
 // and the next one sent, and the stream is always ended and drained.
@@ -89,7 +101,7 @@ static Outcome decode_count(const uint8_t *buf, size_t size) {
 	Edge264MvcSettings settings;
 	edge264mvc_default_settings(&settings);
 	settings.n_threads = threads < 0 ? 0 : threads == 0 ? 1 : threads;
-	Outcome o = {0, 0, DECODED, 0};
+	Outcome o = {0, 0, 14695981039346656037ull, DECODED, 0};
 	Edge264MvcDecoder *dec;
 	if (edge264mvc_open(&dec, &settings) != EDGE264MVC_OK) {
 		o.status = OPEN_FAILED;
@@ -104,6 +116,7 @@ static Outcome decode_count(const uint8_t *buf, size_t size) {
 		int res = edge264mvc_send_nal(dec, buf + start, next - start, 0, 0);
 		int delivered = 0;
 		while (edge264mvc_receive_frame(dec, &f) == EDGE264MVC_OK) {
+			hash_frame(&o, &f);
 			edge264mvc_release_frame(dec, &f);
 			o.frames++;
 			delivered++;
@@ -123,6 +136,7 @@ static Outcome decode_count(const uint8_t *buf, size_t size) {
 	}
 	edge264mvc_send_end(dec);
 	while (edge264mvc_receive_frame(dec, &f) == EDGE264MVC_OK) {
+		hash_frame(&o, &f);
 		edge264mvc_release_frame(dec, &f);
 		o.frames++;
 	}
@@ -165,14 +179,14 @@ static Outcome decode_count_forked(const uint8_t *buf, size_t size) {
 	}
 	close(fds[1]);
 	// poll for the child, killing it if it exceeds the timeout (deadlock)
-	Outcome got = {0, 0, CRASHED, 0};
+	Outcome got = {0, 0, 0, CRASHED, 0};
 	int status;
 	for (int waited_ms = 0; waited_ms < TIMEOUT_SEC * 1000; waited_ms += 20) {
 		if (waitpid(pid, &status, WNOHANG) == pid) {
 			ssize_t n = read(fds[0], &got, sizeof got);
 			if (n != (ssize_t)sizeof got || !WIFEXITED(status) || WEXITSTATUS(status) != 0) {
 				// the child died (an assert, a crash) before reporting
-				got = (Outcome){0, 0, CRASHED, WIFSIGNALED(status) ? WTERMSIG(status) : 0};
+				got = (Outcome){0, 0, 0, CRASHED, WIFSIGNALED(status) ? WTERMSIG(status) : 0};
 			}
 			close(fds[0]);
 			return got;
@@ -198,9 +212,9 @@ static int do_run(const char *manifest, const char *dir) {
 	while (fgets(line, sizeof(line), mf)) {
 		if (line[0] == '#' || line[0] == '\n')
 			continue;
-		char name[512];
+		char name[512], expected_hash[32] = "-";
 		int expected, expected_rejected = 0;
-		if (sscanf(line, "%511s %d %d", name, &expected, &expected_rejected) < 2) {
+		if (sscanf(line, "%511s %d %d %31s", name, &expected, &expected_rejected, expected_hash) < 2) {
 			if (line[strspn(line, " \t\r\n")] == '\0')
 				continue; // a blank line
 			// a line that does not parse would drop its fixture without a word
@@ -237,6 +251,10 @@ static int do_run(const char *manifest, const char *dir) {
 		} else if (got.frames != expected || got.rejected != expected_rejected) {
 			printf(RED "FAIL" RESET " %s (delivered %d frames and rejected %d NALs, expected %d and %d)\n",
 				name, got.frames, got.rejected, expected, expected_rejected);
+			failed++;
+		} else if (strcmp(expected_hash, "-") != 0 && strtoull(expected_hash, NULL, 16) != got.hash) {
+			printf(RED "FAIL" RESET " %s (base view hash %016llx, expected %s)\n",
+				name, (unsigned long long)got.hash, expected_hash);
 			failed++;
 		}
 	}

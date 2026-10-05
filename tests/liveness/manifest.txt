@@ -1,4 +1,4 @@
-# liveness fixtures: <name> <expected base-view frames> [<expected rejected NALs>]
+# liveness fixtures: <name> <expected base-view frames> [<expected rejected NALs> [<base-view hash>]]
 # Each fixture is decoded the way a player does: a NAL the decoder rejects
 # (CORRUPT, UNSUPPORTED) is skipped, and the stream is always ended and drained.
 # A decode that aborts on an assert or crashes FAILs as "crashed".
@@ -204,3 +204,10 @@ reordered_damaged_slices 1
 # caller must get all 45 base frames; tests/partial_receive_check.c also decodes it with
 # a caller receiving one frame per round.
 mvc_requeue_dependent 45
+# rejected_first_slice: a reference P picture of two slices whose first slice is
+# rejected before its reference marking (a reference list modification naming a
+# missing picture) - tests/gen_rejected_first_slice.py. The second slice belongs to
+# the same picture (7.4.1.2.4); taken for a new picture, it was decoded into a picture
+# of the same POC that never came out, so the picture after it predicted from a
+# fully concealed one. The hash pins the decoded bottom half in both pictures.
+rejected_first_slice 3 1 40d5742d25259b25

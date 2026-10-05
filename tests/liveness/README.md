@@ -6,7 +6,8 @@ comparable hash). Each fixture is decoded with a progress guard; the harness
 (tests/liveness_check.c, target `make check-liveness`, also run by `make check`)
 asserts it delivers the expected number of base-view frames without stalling,
 and that the decoder rejects the expected number of NALs (the third column of
-the manifest, 0 when left out). Like a player, the harness skips a rejected NAL,
+the manifest, 0 when left out), and, where a fourth column gives one, that the
+base view's samples hash to it. Like a player, the harness skips a rejected NAL,
 sends the next one and always ends and drains the stream. Each fixture runs in a
 forked child under a wall-clock timeout,
 so a deadlock where `decode_nal` itself never returns (which the
@@ -251,3 +252,14 @@ multithreaded (`EDGE264MVC_THREADS=8` and `-1`), where these deadlocks surface.
   got it queued a second time and delivered as a pair, tripping the assertion
   in `get_frame`, or, with dependent views after it, saw the slot of a held
   dependent view reused. The loop now marks every picture it queues.
+
+- rejected_first_slice.264: a 32x32 IDR picture, a reference P picture of two
+  slices of I_PCM samples whose first slice modifies its reference list to a
+  picture that does not exist, and a P picture of skipped macroblocks
+  (tests/gen_rejected_first_slice.py). The decoder rejects the first slice before
+  its reference marking runs; the second slice still belongs to the same picture
+  (7.4.1.2.4), but the decoder compared its nal_ref_idc with whether the marking
+  had run and opened a new picture for it, with the same POC, which never came
+  out, so the decoded half was lost and the next picture predicted from the
+  concealed one. 3 frames, 1 rejected NAL; the hash pins the decoded bottom half
+  in the P pictures.
