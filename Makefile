@@ -627,11 +627,16 @@ endif
 
 # edge264mvc_test must count every input it does not decode completely as a
 # FAIL and exit 1: a decoder failing with EDGE264MVC_NOMEM (tests/stall_stub.c),
-# a file it cannot open, and a file named without the .264 suffix. Linux only,
-# like the stub.
+# a file it cannot open, and a file named without the .264 suffix; and a trace
+# it cannot write (here trace.yaml is a directory) must end it with exit 1, not
+# a crash. Linux only, like the stub.
 .PHONY: check-test-results
-check-test-results:
+check-test-results: edge264mvc_test$(EXE)
 ifeq ($(OS),linux)
+	$(Q)rm -rf harness_trace && mkdir -p harness_trace/trace.yaml && \
+	  (cd harness_trace && $(TIMEOUT) ../edge264mvc_test$(EXE) -v -y ../tests/conformance/2d/CABA3_Sony_C.264 > /dev/null 2>&1); \
+	  status=$$?; rm -rf harness_trace; \
+	  test $$status -eq 1 || { echo "edge264mvc_test results check FAILED (an unwritable trace gave exit status $$status)"; exit 1; }
 	$(Q)$(CC) -I. src/edge264mvc_test.c tests/stall_stub.c $(CPPFLAGS) $(CFLAGS) -o edge264mvc_test_stall
 	$(Q)STALL_STUB_NOMEM=1 $(TIMEOUT) ./edge264mvc_test_stall -s -y tests/conformance/2d/CABA3_Sony_C.264 > /dev/null 2>&1; \
 	  test $$? -eq 1 || { echo "edge264mvc_test results check FAILED (EDGE264MVC_NOMEM did not FAIL)"; exit 1; }

@@ -975,6 +975,10 @@ int main(int argc, char *argv[])
 	
 	if (trace) {
 		trace_file = fopen("trace.yaml", "w");
+		if (trace_file == NULL) {
+			perror("trace.yaml");
+			return 1;
+		}
 		setvbuf(trace_file, NULL, _IONBF, BUFSIZ);
 	}
 	
