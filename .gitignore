@@ -51,6 +51,7 @@
 !tests/gen_intra8x8_hd_slices.py
 !tests/gen_mvc_requeue_dependent.py
 !tests/gen_long_term_overflow.py
+!tests/gen_idr_after_long_term.py
 !tests/conformance_check.c
 !tests/conformance
 !tests/conformance/2d

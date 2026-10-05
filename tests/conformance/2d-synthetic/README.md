@@ -148,3 +148,9 @@ Guards the samples intra 8x8 Horizontal_Down prediction reads. Four High profile
 Guards the reference marking of a stream that holds more references than `max_num_ref_frames`. A 32x32 stream allowing one reference picture, whose IDR picture is marked long-term, so the sliding window (8.2.5.3) never retires it; each of the following reference P pictures then adds a short-term reference beside it (`tests/gen_long_term_overflow.py`). The two P pictures of I_PCM samples come in two slices each, and a P picture of skipped macroblocks after each shows which reference was kept. Such a stream is not conformant; it aborted on a C.4.5 assert, and a release build kept one reference more than the stream declared. One reference is now discarded as FFmpeg does - here the current picture, the only short-term one - and the picture still counts as a reference for frame_num and for telling its slices apart from the next picture. The hash is anchored to FFmpeg. The JM reference decoder rejects the stream.
 
 Without the fix this line FAILs.
+
+## `idr_after_long_term.264`
+
+Guards the frame_num of an IDR picture. A 32x32 stream allowing one reference picture whose references are all long-term: an IDR picture marked long-term, then two reference P pictures that mark themselves long-term with MMCO 6, followed by a second IDR picture and a P picture of skipped macroblocks predicting from it (`tests/gen_idr_after_long_term.py`). PrevRefFrameNum is 0 for an IDR picture (7.4.3), but the decoder counted the IDR picture's frame_num on from the previous reference picture, so it saw a frame_num gap (8.2.5.2) before it; with every reference slot long-term there was no room for the frames inferred for the gap, and the IDR picture and the P picture after it were rejected as corrupt. The hash is anchored to the JM reference decoder, which FFmpeg matches.
+
+Without the fix this line FAILs.

@@ -1069,6 +1069,21 @@ void *ADD_VARIANT(worker_loop)(void *arg) {
 
 
 /**
+ * Returns FrameNum, the frame_num of the current picture counted on past its
+ * wraparound, from the frame_num of the previous reference picture of the
+ * same view. PrevRefFrameNum is 0 for an IDR picture (7.4.3), whose FrameNum
+ * is thus 0 as well, so that no frame_num gap (8.2.5.2) lies before it.
+ */
+static int derive_FrameNum(const Edge264MvcDecoder *dec, int frame_num, int FrameNumMask, int non_base_view) {
+	if (dec->IdrPicFlag)
+		return 0;
+	int PrevRefFrameNum = dec->PrevRefFrameNum[non_base_view];
+	return PrevRefFrameNum + 1 + ((frame_num - PrevRefFrameNum - 1) & FrameNumMask);
+}
+
+
+
+/**
  * Updates the reference flags by adaptive memory control or sliding window
  * marking process (8.2.5).
  */
@@ -2041,8 +2056,7 @@ int ADD_VARIANT(parse_slice_layer_without_partitioning)(Edge264MvcDecoder *dec, 
 			unset_currPic(dec);
 		}
 		// unset_currPic must happen before prevPicOrderCnt to get an up-to-date value
-		int PrevRefFrameNum = dec->PrevRefFrameNum[non_base_view];
-		dec->FrameNum = PrevRefFrameNum + 1 + ((frame_num - PrevRefFrameNum - 1) & FrameNumMask);
+		dec->FrameNum = derive_FrameNum(dec, frame_num, FrameNumMask, non_base_view);
 		int prevPicOrderCnt = dec->prevPicOrderCnt[non_base_view];
 		int inc = (int)(((unsigned)pic_order_cnt_lsb - (unsigned)prevPicOrderCnt) << shift) >> shift; // sign-extends the lsb difference
 		// picture order counts are added modulo 2^32: on a damaged stream the
@@ -2074,8 +2088,7 @@ int ADD_VARIANT(parse_slice_layer_without_partitioning)(Edge264MvcDecoder *dec, 
 		}
 		dec->delta_pic_order_cnt0 = delta_pic_order_cnt0;
 		// unset_currPic must happen before PrevRefFrameNum to get a definitive value
-		int PrevRefFrameNum = dec->PrevRefFrameNum[non_base_view];
-		dec->FrameNum = PrevRefFrameNum + 1 + ((frame_num - PrevRefFrameNum - 1) & FrameNumMask);
+		dec->FrameNum = derive_FrameNum(dec, frame_num, FrameNumMask, non_base_view);
 		int absFrameNum = (sps->num_ref_frames_in_pic_order_cnt_cycle > 0) ? dec->FrameNum : 0;
 		absFrameNum -= (dec->nal_ref_idc == 0 && absFrameNum > 0);
 		// added modulo 2^32 like the type 0 counts above
@@ -2091,8 +2104,7 @@ int ADD_VARIANT(parse_slice_layer_without_partitioning)(Edge264MvcDecoder *dec, 
 			", absolute: %d}\n" : ", absolute: %d, bottom: %d}\n",
 			TopFieldOrderCnt, BottomFieldOrderCnt);
 	} else {
-		int PrevRefFrameNum = dec->PrevRefFrameNum[non_base_view];
-		dec->FrameNum = PrevRefFrameNum + 1 + ((frame_num - PrevRefFrameNum - 1) & FrameNumMask);
+		dec->FrameNum = derive_FrameNum(dec, frame_num, FrameNumMask, non_base_view);
 		TopFieldOrderCnt = BottomFieldOrderCnt = (int)((unsigned)dec->FrameNum * 2 + (dec->nal_ref_idc != 0) - 1);
 		log_dec(dec, "  pic_order_cnt: {type: 2, absolute: %d}\n", TopFieldOrderCnt);
 	}
