@@ -534,6 +534,7 @@ struct Edge264MvcDecoder {
 	Edge264MvcLogCb log_cb;
 	void *log_arg;
 	uint16_t log_pos; // next writing position in log_buf
+	uint8_t log_truncated; // the trace of the current NAL did not fit in log_buf
 	char log_buf[9416];
 };
 
@@ -1442,16 +1443,43 @@ static const char *ret_to_str(int ret) {
 	return retnames[__builtin_ctz(movemask(set8(ret) == retcodes) | 1 << 8)];
 }
 #ifdef LOGS
+	// The trace of a NAL is built in log_buf, then handed to log_cb with the
+	// result line by print_dec. A trace too long for log_buf (a crafted header
+	// can log far more than any real one) is cut at the end of its last line that
+	// leaves room for the result line, and marked as truncated. Tracing never
+	// changes the result of a NAL.
+	static const char log_truncated_line[] = "  # trace truncated\n";
+	static noinline void cut_dec_log(Edge264MvcDecoder *dec, int room) {
+		int pos = min(dec->log_pos, (int)sizeof(dec->log_buf) - 1);
+		while (pos > 0 && (dec->log_buf[pos - 1] != '\n' || pos + room > (int)sizeof(dec->log_buf)))
+			pos--;
+		dec->log_pos = pos;
+		dec->log_truncated = 1;
+	}
 	#define log_dec(dec, ...) {\
-		if (dec->log_pos < sizeof(dec->log_buf))\
-			dec->log_pos += snprintf(dec->log_buf + dec->log_pos, sizeof(dec->log_buf) - dec->log_pos, __VA_ARGS__);}
+		if (!dec->log_truncated) {\
+			int _room = sizeof(dec->log_buf) - dec->log_pos;\
+			int _len = snprintf(dec->log_buf + dec->log_pos, _room, __VA_ARGS__);\
+			if (_len < _room) {\
+				dec->log_pos += _len;\
+			} else {\
+				dec->log_pos = sizeof(dec->log_buf);\
+				cut_dec_log(dec, 0);\
+			}\
+		}}
 	static noinline int print_dec(Edge264MvcDecoder *dec, const char *suffix, int ret) {
-		int pos = dec->log_pos + snprintf(dec->log_buf + dec->log_pos, sizeof(dec->log_buf) - dec->log_pos, suffix, ret_to_str(ret));
+		int room = snprintf(NULL, 0, suffix, ret_to_str(ret)) + 1;
+		if (dec->log_truncated || dec->log_pos + room > (int)sizeof(dec->log_buf))
+			cut_dec_log(dec, room + (int)sizeof(log_truncated_line) - 1);
+		char *end = dec->log_buf + dec->log_pos;
+		if (dec->log_truncated) {
+			memcpy(end, log_truncated_line, sizeof(log_truncated_line) - 1);
+			end += sizeof(log_truncated_line) - 1;
+		}
+		snprintf(end, room, suffix, ret_to_str(ret));
 		dec->log_pos = 0;
-		if (pos >= sizeof(dec->log_buf))
-			ret = ret ?: ENOTSUP;
-		else
-			dec->log_cb(dec->log_buf, dec->log_arg);
+		dec->log_truncated = 0;
+		dec->log_cb(dec->log_buf, dec->log_arg);
 		return ret;
 	}
 	#define log_mb(ctx, ...) {\
