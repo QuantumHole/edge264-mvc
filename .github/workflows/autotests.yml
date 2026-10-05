@@ -75,6 +75,8 @@ jobs:
       - run: EDGE264MVC_THREADS=4 setarch -R ./asan_check run tests/asan/manifest.txt tests/asan
       - run: setarch -R ./multi_decoder_check tests/conformance/mvc/MVCDS-5.264 9 tests/conformance/2d/CABA3_Sony_C.264 300
       - run: setarch -R ./slice_overrun_check tests/conformance/2d-synthetic/overrun_reference.264 8 300 20
+      # inter prediction at the right picture edge against the deblocking of its reference
+      - run: TSAN_OPTIONS=halt_on_error=1 setarch -R ./slice_overrun_check tests/conformance/2d/cabac_mot_frm0_full.264 2 0 20
   # A short libFuzzer run seeded with the committed streams, so a change that
   # breaks the decoder on damaged input shows up before a long campaign would.
   x86_64-linux-fuzz:

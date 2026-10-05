@@ -1190,9 +1190,11 @@ static void noinline decode_inter(Edge264MvcContext *ctx, int i, int w, int h) {
 	int yInt_C = ctx->mby * 8 + (y444[i4x4] >> 1) + (y >> 3);
 	
 	// wait until the reference rows we read are final, the bottom-most being
-	// read by the 6-tap filter (chroma stays above it), plus the 3 rows that
+	// read by the 6-tap filter (chroma stays above it), plus the row after it,
+	// whose first bytes the vector loads of a block at the right edge of the
+	// picture read past the end of that row (and ignore), plus the 3 rows that
 	// deblocking the macroblock row below may still modify
-	int mby_ref = min(max(yInt_Y + h + 5, 0) >> 4, ctx->t.pic_height_in_mbs - 1);
+	int mby_ref = min(max(yInt_Y + h + 6, 0) >> 4, ctx->t.pic_height_in_mbs - 1);
 	await_frame_progress(ctx, refPic, (mby_ref + 1) * ctx->t.pic_width_in_mbs);
 	const uint8_t *src_Y = ref + xInt_Y + yInt_Y * ctx->t.stride[0];
 	const uint8_t *src_C = ref + xInt_C + yInt_C * ctx->t.stride[1] + ctx->t.plane_size_Y;
