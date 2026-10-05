@@ -4,12 +4,15 @@ These guard against decode-stall, deadlock, or abort bugs that a hash-based
 comparison cannot express (a stalled or aborting decoder never reaches a
 comparable hash). Each fixture is decoded with a progress guard; the harness
 (tests/liveness_check.c, target `make check-liveness`, also run by `make check`)
-asserts it delivers the expected number of base-view frames without stalling
-(an assert-abort regression instead crashes the harness, which `make` reports as
-a failed target). Each fixture runs in a forked child under a wall-clock timeout,
+asserts it delivers the expected number of base-view frames without stalling,
+and that the decoder rejects the expected number of NALs (the third column of
+the manifest, 0 when left out). Like a player, the harness skips a rejected NAL,
+sends the next one and always ends and drains the stream. Each fixture runs in a
+forked child under a wall-clock timeout,
 so a deadlock where `decode_nal` itself never returns (which the
 in-process progress guard cannot catch) is reported as a clean "deadlock" FAIL
-instead of hanging the whole suite. The liveness suite is also run
+instead of hanging the whole suite, and an assert-abort or crash as a "crashed"
+FAIL. The liveness suite is also run
 multithreaded (`EDGE264MVC_THREADS=8` and `-1`), where these deadlocks surface.
 
 - mvc_unpaired_base.264: derived from tests/conformance/mvc/MVCDS-4.264 by
@@ -23,7 +26,8 @@ multithreaded (`EDGE264MVC_THREADS=8` and `-1`), where these deadlocks surface.
   is already long-term, so no short-term slot can be reclaimed for the inferred
   non-existing frames. edge264 used to abort on assert(sref_slots > 0); it now
   rejects the non-conformant frame with EBADMSG (ffmpeg likewise only reports an
-  error). Expected 0 delivered frames; a regressed assert aborts the harness.
+  error). The picture before the gap is delivered and the one after it rejected:
+  1 frame, 1 rejected NAL; a regressed assert FAILs as "crashed".
 
 - tall_progressive.264: a synthetic single progressive IDR of 1x540 MBs
   (16x8640px), generated with tests/gen_avc.py. Its height exceeds the 528-row
@@ -155,7 +159,7 @@ multithreaded (`EDGE264MVC_THREADS=8` and `-1`), where these deadlocks surface.
   decode_nal never returns. This is a true internal deadlock, not an ENOBUFS spin, so
   the in-process progress guard cannot catch it; the harness therefore decodes each fixture in a
   forked child under a wall-clock timeout and reports an overrun as a clean "deadlock" FAIL. The
-  fix rejects each base-less inter-coded dependent slice as corrupt (EBADMSG) and delivers 0
+  fix rejects each of the 18 base-less inter-coded dependent slices as corrupt (EBADMSG) and delivers 0
   frames, like ffmpeg. Regresses the base-less dependent-view guard
   (edge264mvc_headers.c parse_slice_layer_without_partitioning) => deadlock (only visible
   multithreaded; the synchronous path force-runs the task and does not hang).
@@ -222,7 +226,8 @@ multithreaded (`EDGE264MVC_THREADS=8` and `-1`), where these deadlocks surface.
   0, which is the current picture: single-threaded the slice read its own
   undecoded samples, multithreaded its task waited forever on its own decoding
   progress. `parse_ref_pic_list_modification` now never substitutes (nor keeps)
-  the current picture, and rejects a slice that has no other picture to refer to.
+  the current picture, and rejects a slice that has no other picture to refer to
+  (0 frames, 1 rejected NAL).
 
 - reordered_damaged_slices.264: a 417-byte stream generated with
   tests/gen_reordered_damaged_slices.py - one 176x160 IDR picture coded as ten

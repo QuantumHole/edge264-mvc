@@ -4,7 +4,8 @@
 // check-test-results). By default every NAL is answered with EDGE264MVC_AGAIN
 // and no frame is ever ready; with STALL_STUB_BLOCK set, send_nal blocks
 // forever, as a deadlocked decoder would; with STALL_STUB_NOMEM set, it fails
-// every NAL with EDGE264MVC_NOMEM.
+// every NAL with EDGE264MVC_NOMEM; with STALL_STUB_ABORT set, it aborts, as a
+// decoder tripping an assert would.
 
 #include <stdint.h>
 #include <stdlib.h>
@@ -34,6 +35,8 @@ size_t edge264mvc_find_start_code(const uint8_t *buf, size_t size) {
 }
 
 int edge264mvc_send_nal(Edge264MvcDecoder *dec, const uint8_t *buf, size_t size, int64_t pts, int64_t user_data) {
+	if (getenv("STALL_STUB_ABORT") != NULL)
+		abort();
 	while (getenv("STALL_STUB_BLOCK") != NULL)
 		pause();
 	return getenv("STALL_STUB_NOMEM") != NULL ? EDGE264MVC_NOMEM : EDGE264MVC_AGAIN;

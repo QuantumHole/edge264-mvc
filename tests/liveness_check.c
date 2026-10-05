@@ -11,7 +11,10 @@
 //
 // The harness drives the documented decode protocol with a PROGRESS GUARD, so
 // a regressed (stalling) decoder fails cleanly with "stall" instead of hanging
-// the test suite. Manifest lines: "<name> <expected_base_frames>".
+// the test suite. Each fixture is decoded the way a player does: a NAL the
+// decoder rejects (CORRUPT, UNSUPPORTED) is skipped, and the stream is always
+// ended and drained. Manifest lines: "<name> <expected_base_frames>
+// [<expected_rejected_nals>]" (0 when left out).
 //
 // Self-contained: only edge264mvc.h + libc, like tests/conformance_check.c.
 // Usage: liveness_check run <manifest> <fixtures-dir>
@@ -65,8 +68,19 @@ static uint8_t *load_file(const char *path, size_t *size_out) {
 	return m;
 }
 
-// Returns delivered base-frame count, or -1 if the decoder stalled.
-static int decode_count(const uint8_t *buf, size_t size) {
+// The outcome of decoding a fixture: frames delivered, NALs the decoder
+// rejected (any result but OK and AGAIN), and how the decode ended.
+enum { DECODED, STALLED, OPEN_FAILED, CRASHED, DEADLOCKED };
+typedef struct {
+	int frames;
+	int rejected;
+	int status;
+	int signal; // the signal a CRASHED child died of, or 0 if it exited
+} Outcome;
+
+// Decodes a whole fixture the way a player does: a rejected NAL is skipped
+// and the next one sent, and the stream is always ended and drained.
+static Outcome decode_count(const uint8_t *buf, size_t size) {
 	// EDGE264MVC_THREADS lets the liveness suite run the damaged-stream fixtures
 	// under multithreading (default 0 = single-thread, <0 = auto), guarding the
 	// multithreaded teardown and MVC-pairing deadlock fixes against regressions.
@@ -75,54 +89,53 @@ static int decode_count(const uint8_t *buf, size_t size) {
 	Edge264MvcSettings settings;
 	edge264mvc_default_settings(&settings);
 	settings.n_threads = threads < 0 ? 0 : threads == 0 ? 1 : threads;
+	Outcome o = {0, 0, DECODED, 0};
 	Edge264MvcDecoder *dec;
-	if (edge264mvc_open(&dec, &settings) != EDGE264MVC_OK)
-		return -1;
+	if (edge264mvc_open(&dec, &settings) != EDGE264MVC_OK) {
+		o.status = OPEN_FAILED;
+		return o;
+	}
 	Edge264MvcFrame f;
-	int frames = 0, res = EDGE264MVC_OK;
 	long no_progress = 0;
 	size_t pos = edge264mvc_find_start_code(buf, size);
 	while (pos < size) {
 		size_t start = pos + 3;
 		size_t next = start + edge264mvc_find_start_code(buf + start, size - start);
-		res = edge264mvc_send_nal(dec, buf + start, next - start, 0, 0);
+		int res = edge264mvc_send_nal(dec, buf + start, next - start, 0, 0);
 		int delivered = 0;
 		while (edge264mvc_receive_frame(dec, &f) == EDGE264MVC_OK) {
 			edge264mvc_release_frame(dec, &f);
-			frames++;
+			o.frames++;
 			delivered++;
 		}
 		if (res == EDGE264MVC_AGAIN) {
 			// AGAIN => receive (done above) then send the same NAL again
 			if (delivered == 0 && ++no_progress >= STALL_LIMIT) {
 				edge264mvc_close(&dec);
-				return -1;
+				o.status = STALLED;
+				return o;
 			}
 			continue;
 		}
 		no_progress = 0;
-		if (res != EDGE264MVC_OK && res != EDGE264MVC_UNSUPPORTED)
-			break; // the decode stops at the first failing NAL
+		o.rejected += res != EDGE264MVC_OK;
 		pos = next;
 	}
-	if (pos >= size) {
-		edge264mvc_send_end(dec);
-		while (edge264mvc_receive_frame(dec, &f) == EDGE264MVC_OK) {
-			edge264mvc_release_frame(dec, &f);
-			frames++;
-		}
+	edge264mvc_send_end(dec);
+	while (edge264mvc_receive_frame(dec, &f) == EDGE264MVC_OK) {
+		edge264mvc_release_frame(dec, &f);
+		o.frames++;
 	}
 	edge264mvc_close(&dec);
-	return frames;
+	return o;
 }
 
 // Runs decode_count in a forked child under a wall-clock timeout, so an internal
 // decoder deadlock (a NAL that never returns - which the in-process progress
-// guard cannot catch) is reported as a clean FAIL rather than hanging the suite.
-// Returns the child's frame count (>=0), -1 on stall/crash, or -2 on timeout
-// (deadlock). Falls back to an in-process decode if fork/pipe are unavailable
-// (and on Windows, which has neither).
-static int decode_count_forked(const uint8_t *buf, size_t size) {
+// guard cannot catch) and a crash are reported as a clean FAIL rather than
+// hanging or ending the suite. Falls back to an in-process decode if fork/pipe
+// are unavailable (and on Windows, which has neither).
+static Outcome decode_count_forked(const uint8_t *buf, size_t size) {
 #ifdef _WIN32
 	return decode_count(buf, size); // no fork on Windows: the caller's own time limit applies
 #else
@@ -136,9 +149,9 @@ static int decode_count_forked(const uint8_t *buf, size_t size) {
 		close(fds[1]);
 		return decode_count(buf, size);
 	}
-	if (pid == 0) { // child: decode and report the count through the pipe
+	if (pid == 0) { // child: decode and report the outcome through the pipe
 		close(fds[0]);
-		int got = decode_count(buf, size);
+		Outcome got = decode_count(buf, size);
 		ssize_t w = write(fds[1], &got, sizeof got);
 		(void)w;
 		close(fds[1]);
@@ -147,17 +160,20 @@ static int decode_count_forked(const uint8_t *buf, size_t size) {
 		// ptrace-based StopTheWorld that hangs in a forked child under a restrictive
 		// yama ptrace_scope, which would defeat the timeout. Memory-safety of the
 		// decode paths is covered non-forked by tests/asan; here we only need the
-		// frame count, already sent through the pipe.
+		// outcome, already sent through the pipe.
 		_exit(0);
 	}
 	close(fds[1]);
 	// poll for the child, killing it if it exceeds the timeout (deadlock)
-	int status, got = -1;
+	Outcome got = {0, 0, CRASHED, 0};
+	int status;
 	for (int waited_ms = 0; waited_ms < TIMEOUT_SEC * 1000; waited_ms += 20) {
 		if (waitpid(pid, &status, WNOHANG) == pid) {
 			ssize_t n = read(fds[0], &got, sizeof got);
-			if (n != (ssize_t)sizeof got || !WIFEXITED(status) || WEXITSTATUS(status) != 0)
-				got = -1; // child crashed/aborted before reporting
+			if (n != (ssize_t)sizeof got || !WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+				// the child died (an assert, a crash) before reporting
+				got = (Outcome){0, 0, CRASHED, WIFSIGNALED(status) ? WTERMSIG(status) : 0};
+			}
 			close(fds[0]);
 			return got;
 		}
@@ -166,7 +182,8 @@ static int decode_count_forked(const uint8_t *buf, size_t size) {
 	kill(pid, SIGKILL);
 	waitpid(pid, &status, 0);
 	close(fds[0]);
-	return -2; // deadlock: the child never returned within the timeout
+	got.status = DEADLOCKED; // the child never returned within the timeout
+	return got;
 #endif
 }
 
@@ -182,8 +199,8 @@ static int do_run(const char *manifest, const char *dir) {
 		if (line[0] == '#' || line[0] == '\n')
 			continue;
 		char name[512];
-		int expected;
-		if (sscanf(line, "%511s %d", name, &expected) != 2) {
+		int expected, expected_rejected = 0;
+		if (sscanf(line, "%511s %d %d", name, &expected, &expected_rejected) < 2) {
 			if (line[strspn(line, " \t\r\n")] == '\0')
 				continue; // a blank line
 			// a line that does not parse would drop its fixture without a word
@@ -203,16 +220,23 @@ static int do_run(const char *manifest, const char *dir) {
 			failed++;
 			continue;
 		}
-		int got = decode_count_forked(buf, size);
+		Outcome got = decode_count_forked(buf, size);
 		free(buf);
-		if (got == -2) {
+		if (got.status == DEADLOCKED) {
 			printf(RED "FAIL" RESET " %s (deadlock: send_nal did not return within %ds)\n", name, TIMEOUT_SEC);
 			failed++;
-		} else if (got < 0) {
+		} else if (got.status == CRASHED) {
+			printf(RED "FAIL" RESET " %s (crashed: the decode died of signal %d)\n", name, got.signal);
+			failed++;
+		} else if (got.status == OPEN_FAILED) {
+			printf(RED "FAIL" RESET " %s (edge264mvc_open failed)\n", name);
+			failed++;
+		} else if (got.status == STALLED) {
 			printf(RED "FAIL" RESET " %s (stall: no forward progress)\n", name);
 			failed++;
-		} else if (got != expected) {
-			printf(RED "FAIL" RESET " %s (delivered %d frames, expected %d)\n", name, got, expected);
+		} else if (got.frames != expected || got.rejected != expected_rejected) {
+			printf(RED "FAIL" RESET " %s (delivered %d frames and rejected %d NALs, expected %d and %d)\n",
+				name, got.frames, got.rejected, expected, expected_rejected);
 			failed++;
 		}
 	}
