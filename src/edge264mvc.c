@@ -946,7 +946,7 @@ int edge264mvc_open(Edge264MvcDecoder **decoder, const Edge264MvcSettings *setti
 	if (dec == NULL)
 		return EDGE264MVC_NOMEM;
 	// the largest frame of any level is 139264 macroblocks (MaxFS of level 6.2)
-	dec->max_frame_mbs = s.max_frame_pixels > 0 ? s.max_frame_pixels / 256 : 139264;
+	dec->max_frame_pixels = s.max_frame_pixels;
 	*decoder = dec;
 	return EDGE264MVC_OK;
 }

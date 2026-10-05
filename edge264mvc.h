@@ -111,9 +111,11 @@ typedef struct Edge264MvcSettings {
 	// 1: decode synchronously inside edge264mvc_send_nal, on the calling thread;
 	// N > 1: N worker threads (at most 16 are used).
 	int32_t n_threads;
-	// Largest frame size in luma pixels. Larger frames are reported as
-	// EDGE264MVC_UNSUPPORTED. 0 (default): 35651584 (8192x4352), the largest
-	// frame any level of H.264 allows.
+	// Largest frame size in luma pixels, after cropping (as width_Y * height_Y
+	// of the frames). Larger frames are reported as EDGE264MVC_UNSUPPORTED, and
+	// so is a stream whose coded frame exceeds the limit by more than rounding
+	// each dimension up to a multiple of 16. 0 (default): 35651584 (8192x4352),
+	// the largest frame any level of H.264 allows.
 	int32_t max_frame_pixels;
 	Edge264MvcLogCb log_cb; // NULL (default): no trace
 	void *log_arg;

@@ -55,7 +55,7 @@ jobs:
       - run: EDGE264MVC_THREADS=8 ./liveness_check.exe run tests/liveness/manifest.txt tests/liveness
       - run: ./asan_check.exe run tests/asan/manifest.txt tests/asan
       - run: EDGE264MVC_THREADS=4 ./asan_check.exe run tests/asan/manifest.txt tests/asan
-      - run: ./api_check.exe tests/conformance/mvc/MVCDS-5.264 tests/conformance/2d/CABA3_Sony_C.264
+      - run: ./api_check.exe tests/conformance/mvc/MVCDS-5.264 tests/conformance/2d-synthetic/crop_top_left.264 tests/crop-margin.264 tests/conformance/2d/CABA3_Sony_C.264
       - run: make OS=windows clean && make OS=windows CFLAGS=-march=x86-64 STATIC=yes BUILDTEST=no && gcc -shared -I. tests/static_plugin.c libedge264mvc.a -static -pthread -o static_plugin.dll && ! objdump -p static_plugin.dll | grep edge264mvc_
   # AddressSanitizer + UndefinedBehaviorSanitizer over the whole test suite,
   # then ThreadSanitizer over the multithreaded passes. setarch -R: the

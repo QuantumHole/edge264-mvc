@@ -6,9 +6,11 @@
 // again), a flush after the end followed by the same stream again, the
 // pts / user_data passthrough, and a caller that holds its latest frame
 // while it sends the next NALs - through an end of sequence and a change of
-// the frame size. It uses one committed MVC stream and one 2D stream, each
-// single-threaded and with EDGE264MVC_THREADS worker threads. The struct
-// layouts are checked when it is compiled.
+// the frame size - and the frame size limit max_frame_pixels, at the size of
+// each stream's frames after cropping and one below. It uses committed MVC
+// and 2D streams, two of them cropped, each single-threaded and with
+// EDGE264MVC_THREADS worker threads. The struct layouts are checked when it is
+// compiled.
 //
 // Usage: api_check <stream.264>... (the held-frame check uses the last stream,
 // an end of sequence, the last stream again, then the first one, which must
@@ -55,11 +57,18 @@ typedef struct {
 	uint64_t hash;
 	int pts_errors; // frames whose pts is not one that was sent with a NAL
 	int64_t max_pts;
+	int width, height, coded_width, coded_height; // of the first frame
 } Output;
 
 static void receive_all(Edge264MvcDecoder *dec, Output *o) {
 	Edge264MvcFrame f;
 	while (edge264mvc_receive_frame(dec, &f) == EDGE264MVC_OK) {
+		if (o->frames == 0) {
+			o->width = f.width_Y;
+			o->height = f.height_Y;
+			o->coded_width = f.width_Y + f.crop[1] + f.crop[3];
+			o->coded_height = f.height_Y + f.crop[0] + f.crop[2];
+		}
 		for (int v = 0; v < 2; v++) {
 			if (f.views[v].planes[0] == NULL)
 				continue;
@@ -230,6 +239,43 @@ static void check_held_frame(const char *path_a, const char *path_b, int n_threa
 	free(a), free(b), free(buf);
 }
 
+// Decodes a whole stream single-threaded with the given max_frame_pixels.
+static Output decode_with_limit(const uint8_t *buf, size_t size, int32_t max_frame_pixels) {
+	Output o = {};
+	Edge264MvcSettings settings;
+	edge264mvc_default_settings(&settings);
+	settings.n_threads = 1;
+	settings.max_frame_pixels = max_frame_pixels;
+	Edge264MvcDecoder *dec = NULL;
+	CHECK(edge264mvc_open(&dec, &settings) == EDGE264MVC_OK, "open with max_frame_pixels %d failed", max_frame_pixels);
+	if (dec != NULL) {
+		decode_stream(dec, buf, size, &o);
+		edge264mvc_close(&dec);
+	}
+	return o;
+}
+
+// max_frame_pixels bounds the frame the caller receives, after cropping, and
+// lets the coded frame exceed it only by rounding each dimension up to whole
+// macroblocks (which bounds the memory of a stream that crops most of it away).
+static void check_frame_limit(const char *path) {
+	size_t size = 0;
+	uint8_t *buf = load_file(path, &size);
+	if (buf == NULL)
+		return;
+	Output all = decode_with_limit(buf, size, 0);
+	int pixels = all.width * all.height;
+	int width_mbs = all.coded_width >> 4, height_mbs = all.coded_height >> 4;
+	int fits = width_mbs * height_mbs <= pixels / 256 + width_mbs + height_mbs + 1;
+	Output at = decode_with_limit(buf, size, pixels);
+	CHECK(at.frames == (fits ? all.frames : 0), "%s: with max_frame_pixels %dx%d, %d frames instead of %d",
+		path, all.width, all.height, at.frames, fits ? all.frames : 0);
+	Output below = decode_with_limit(buf, size, pixels - 1);
+	CHECK(below.frames == 0, "%s: with max_frame_pixels one below %dx%d, %d frames instead of 0",
+		path, all.width, all.height, below.frames);
+	free(buf);
+}
+
 int main(int argc, char *argv[]) {
 	if (argc < 2) {
 		fprintf(stderr, "Usage: %s <stream.264>...\n", argv[0]);
@@ -267,6 +313,7 @@ int main(int argc, char *argv[]) {
 	for (int i = 1; i < argc; i++) {
 		check_stream(argv[i], 1);
 		check_stream(argv[i], threads);
+		check_frame_limit(argv[i]);
 	}
 	if (argc > 2) {
 		check_held_frame(argv[argc - 1], argv[1], 1);

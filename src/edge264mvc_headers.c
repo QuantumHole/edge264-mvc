@@ -3137,10 +3137,6 @@ int ADD_VARIANT(parse_seq_parameter_set)(Edge264MvcDecoder *dec, Edge264MvcUnref
 	if (!sps.frame_mbs_only_flag)
 		ret = ENOTSUP;
 	sps.pic_height_in_mbs = pic_height_in_map_units << 1 >> sps.frame_mbs_only_flag;
-	// frames larger than max_frame_pixels (by default the largest any level
-	// allows) are not decoded, which also bounds the memory a crafted SPS takes
-	if (sps.pic_width_in_mbs * sps.pic_height_in_mbs > dec->max_frame_mbs)
-		ret = ENOTSUP;
 	int mvc = (dec->nal_unit_type == 15);
 	// contrary to H.10.2.1-f we force MaxDpbFrames a multiple of 2 for MVC
 	int MaxDpbFrames = min((MaxDpbMbs[min(level_idc, 63)] / (unsigned)(sps.pic_width_in_mbs * sps.pic_height_in_mbs)) << mvc, 16);
@@ -3213,6 +3209,21 @@ int ADD_VARIANT(parse_seq_parameter_set)(Edge264MvcDecoder *dec, Edge264MvcUnref
 		sps.frame_crop_offsets[2] = get_ue16(&dec->gb, limY - (sps.frame_crop_offsets[0] >> shiftY)) << shiftY;
 		log_dec(dec, "  frame_crop_offsets: {left: %u, right: %u, top: %u, bottom: %u}\n",
 			sps.frame_crop_offsets[3], sps.frame_crop_offsets[1], sps.frame_crop_offsets[0], sps.frame_crop_offsets[2]);
+	}
+	
+	// Frames larger than max_frame_pixels are not decoded, which also bounds the
+	// memory a crafted SPS takes. The limit applies to the frame after cropping,
+	// as the caller receives it, and the coded frame may exceed it only by
+	// rounding each dimension up to whole macroblocks. By default it is the
+	// largest coded frame any level allows (Table A-1, MaxFS of level 6.2).
+	int frame_mbs = sps.pic_width_in_mbs * sps.pic_height_in_mbs;
+	if (dec->max_frame_pixels == 0) {
+		if (frame_mbs > 139264)
+			ret = ENOTSUP;
+	} else if ((int64_t)((sps.pic_width_in_mbs << 4) - sps.frame_crop_offsets[3] - sps.frame_crop_offsets[1]) *
+		((sps.pic_height_in_mbs << 4) - sps.frame_crop_offsets[0] - sps.frame_crop_offsets[2]) > dec->max_frame_pixels ||
+		frame_mbs > dec->max_frame_pixels / 256 + sps.pic_width_in_mbs + sps.pic_height_in_mbs + 1) {
+		ret = ENOTSUP;
 	}
 	
 	int vui_present = get_u1(&dec->gb);
